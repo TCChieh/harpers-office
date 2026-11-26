@@ -6,6 +6,8 @@ mkdir -p "$DIR"
 cp "$ROOT/office/index.html" "$DIR/index.html"
 [ -f "$DIR/roster.js" ] || printf 'window.LETS_OFFICE_ROSTER={"updated":%s,"sessions":[]};\n' "$(date +%s)" > "$DIR/roster.js"
 URL="file://$DIR/index.html"
+# Git Bash / MSYS / Cygwin on Windows: /c/Users/... → file:///C:/Users/...
+if command -v cygpath >/dev/null 2>&1; then URL="file:///$(cygpath -m "$DIR")/index.html"; fi
 case "$(uname -s)" in
   Darwin) open "$URL" ;;
   *)

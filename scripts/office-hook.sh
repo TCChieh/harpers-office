@@ -14,15 +14,26 @@ ROSTER="$OFFICE_DIR/roster.js"
 LOCK="$OFFICE_DIR/.lock"
 mkdir -p "$OFFICE_DIR" || exit 0
 
-INPUT="$(cat 2>/dev/null | head -c 200000)"
+INPUT="$(cat 2>/dev/null | head -c 200000 | tr -d '\r')"
+
+# A usable Python, if any. On Windows "python3" is often the Microsoft Store
+# placeholder: it exists on PATH but prints nothing, so test it before trusting it.
+PY=""
+for c in python3 python; do
+  if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import json' >/dev/null 2>&1; then PY="$c"; break; fi
+done
 
 # ---- field extraction: jq -> python3 -> sed (top-level string fields only) ----
 get() {
   local key="$1"
+  _get "$key" | tr -d '\r' | head -n1
+}
+_get() {
+  local key="$1"
   if command -v jq >/dev/null 2>&1; then
     printf '%s' "$INPUT" | jq -r --arg k "$key" '.[$k] // empty | if type=="string" then . else empty end' 2>/dev/null
-  elif command -v python3 >/dev/null 2>&1; then
-    printf '%s' "$INPUT" | python3 -c 'import sys,json
+  elif [ -n "$PY" ]; then
+    printf '%s' "$INPUT" | "$PY" -c 'import sys,json
 try:
   v=json.load(sys.stdin).get(sys.argv[1],"")
   print(v if isinstance(v,str) else "")
@@ -36,6 +47,7 @@ EVENT="$(get hook_event_name)"
 SID="$(get session_id | tr -cd 'A-Za-z0-9_-' | cut -c1-64)"
 [ -n "$EVENT" ] && [ -n "$SID" ] || exit 0
 CWD="$(get cwd)"; [ -n "$CWD" ] || CWD="${CLAUDE_PROJECT_DIR:-}"
+CWD="${CWD//\\//}"   # Windows paths: C:\Users\me\proj → C:/Users/me/proj
 PROJECT=""
 [ -n "$CWD" ] && PROJECT="$(basename "$CWD" | tr -d '\t\r\n"\\<>`$' | cut -c1-48)"
 NOW="$(date +%s)"

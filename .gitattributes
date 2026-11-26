@@ -1,0 +1,4 @@
+# Keep LF endings on every platform: bash scripts with CRLF fail on Windows (Git Bash)
+* text=auto eol=lf
+*.jpg binary
+*.png binary
