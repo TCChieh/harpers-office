@@ -1,0 +1,12 @@
+{
+  "name": "harpers-office",
+  "owner": { "name": "Harper" },
+  "plugins": [
+    {
+      "name": "harpers-office",
+      "source": "./",
+      "description": "Neon 3D office that visualizes your running Claude Code sessions.",
+      "version": "1.0.0"
+    }
+  ]
+}
