@@ -6,6 +6,7 @@
 # Must stay silent on stdout (SessionStart/UserPromptSubmit stdout is fed to Claude).
 
 exec 1>/dev/null 2>/dev/null
+[ -n "${LETS_OFFICE_DEBUG:-}" ] && exec 2>>"${LETS_OFFICE_DIR:-$HOME/.claude/lets-office}/hook.log" && set -x
 set -u
 
 OFFICE_DIR="${LETS_OFFICE_DIR:-$HOME/.claude/lets-office}"
@@ -14,23 +15,18 @@ ROSTER="$OFFICE_DIR/roster.js"
 LOCK="$OFFICE_DIR/.lock"
 mkdir -p "$OFFICE_DIR" || exit 0
 
-INPUT="$(cat 2>/dev/null | head -c 200000 | tr -d '\r')"
+INPUT="$(cat 2>/dev/null | head -c 200000)"
 
-# A usable Python, if any. On Windows "python3" is often the Microsoft Store
-# placeholder: it exists on PATH but prints nothing, so test it before trusting it.
+# ---- field extraction: jq -> a python that really runs -> sed (top-level string fields only) ----
+# Windows ships "python3"/"python" stubs that only open the Microsoft Store, so test before trusting one.
 PY=""
 for c in python3 python; do
-  if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import json' >/dev/null 2>&1; then PY="$c"; break; fi
+  if command -v "$c" >/dev/null 2>&1 && [ "$("$c" -c 'print(42)' 2>/dev/null)" = "42" ]; then PY="$c"; break; fi
 done
-
-# ---- field extraction: jq -> python3 -> sed (top-level string fields only) ----
+HAS_JQ=0; command -v jq >/dev/null 2>&1 && [ "$(echo '{"a":1}' | jq -r .a 2>/dev/null)" = "1" ] && HAS_JQ=1
 get() {
   local key="$1"
-  _get "$key" | tr -d '\r' | head -n1
-}
-_get() {
-  local key="$1"
-  if command -v jq >/dev/null 2>&1; then
+  if [ "$HAS_JQ" = 1 ]; then
     printf '%s' "$INPUT" | jq -r --arg k "$key" '.[$k] // empty | if type=="string" then . else empty end' 2>/dev/null
   elif [ -n "$PY" ]; then
     printf '%s' "$INPUT" | "$PY" -c 'import sys,json
@@ -39,7 +35,7 @@ try:
   print(v if isinstance(v,str) else "")
 except Exception: pass' "$key" 2>/dev/null
   else
-    printf '%s' "$INPUT" | tr '\n' ' ' | sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1
+    printf '%s' "$INPUT" | tr '\n\r' '  ' | sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1
   fi
 }
 
@@ -47,8 +43,9 @@ EVENT="$(get hook_event_name)"
 SID="$(get session_id | tr -cd 'A-Za-z0-9_-' | cut -c1-64)"
 [ -n "$EVENT" ] && [ -n "$SID" ] || exit 0
 CWD="$(get cwd)"; [ -n "$CWD" ] || CWD="${CLAUDE_PROJECT_DIR:-}"
-CWD="${CWD//\\//}"   # Windows paths: C:\Users\me\proj → C:/Users/me/proj
 PROJECT=""
+# Windows paths (C:\\Users\\x or C:\Users\x) → forward slashes before taking the folder name
+CWD="$(printf '%s' "$CWD" | sed 's/\\\\/\//g; s/\\/\//g; s/\/*$//')"
 [ -n "$CWD" ] && PROJECT="$(basename "$CWD" | tr -d '\t\r\n"\\<>`$' | cut -c1-48)"
 NOW="$(date +%s)"
 
