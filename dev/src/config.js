@@ -6,7 +6,7 @@ export const COLOR_NAMES = ['紅', '橙', '黃', '綠', '藍', '靛', '紫'];
 export const G = 24;          // block pitch
 export const BLOCK = 18;      // block size (street = G - BLOCK = 6)
 export const ROOM = 6;        // half-size of a lab footprint (12×12, rounded)
-export const RING = 10.5;     // square walking loop around the plaza (half-size)
+export const RING = 8.0;      // square walking loop around the plaza (half-size)
 export const CAMPUS = 40;     // half-size of the campus ground
 
 // order = seat order (1st session → Heat, …). gx/gz = grid cell (-1..1)

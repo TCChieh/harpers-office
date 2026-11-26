@@ -29,17 +29,17 @@ export function buildTwin(scene, reduced) {
   const mapTop = new THREE.Mesh(new THREE.CircleGeometry(R + 0.3, 96), new THREE.ShaderMaterial({ uniforms: mapU,
     vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
     fragmentShader: `uniform float uTime; uniform vec3 uColor; uniform float uEnv; varying vec2 vUv;
-      float gridLine(vec2 q){ vec2 d = abs(fract(q - .5) - .5) / fwidth(q); return 1. - min(min(d.x, d.y), 1.); }
+      float gridLine(vec2 q){ vec2 d = abs(fract(q - .5) - .5) / max(fwidth(q), vec2(1e-3)); return 1. - min(min(d.x, d.y), 1.); }
       void main(){ vec2 p = vUv*2. - 1.; float r = length(p);
         vec3 base = mix(vec3(.05,.08,.18), vec3(.02,.03,.08), r);
         float fine = gridLine(p*16.)*.35, major = gridLine(p*4.);
-        float ang = atan(p.y, p.x)/6.28318 + .5;
-        float sw = fract(ang - uTime*.12); float sweep = pow(sw, 14.) + smoothstep(.997, 1., sw)*2.;
-        float rings = 0.; for (int i = 1; i < 4; i++) rings += 1. - smoothstep(0., fwidth(r)*1.5, abs(r - float(i)*.25));
+        float ang = atan(p.y, p.x + 1e-5)/6.28318 + .5;
+        float sw = fract(ang - uTime*.12); float sweep = pow(clamp(sw, 0., 1.), 14.) + smoothstep(.997, 1., sw)*2.;
+        float rings = 0.; for (int i = 1; i < 4; i++) rings += 1. - smoothstep(0., max(fwidth(r)*1.5, 1e-3), abs(r - float(i)*.25));
         float edge = smoothstep(.86, .985, r) * (1. - smoothstep(.985, 1., r));
         vec3 tint = mix(vec3(.35,.55,1.), uColor, .35 + .65*uEnv);
         vec3 col = base + tint*((fine + major*.6)*.22*(1.-r*.5) + rings*.18 + sweep*.35 + edge*.9);
-        gl_FragColor = vec4(col, 1.); }` }));
+        gl_FragColor = vec4(clamp(col, 0., 4.), 1.); }` }));
   mapTop.rotation.x = -Math.PI / 2; mapTop.position.y = TOP + 0.01; g.add(mapTop);
 
   // mini city: blocks of tiny buildings
@@ -108,7 +108,7 @@ export function buildTwin(scene, reduced) {
   const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.35, R * 0.8, 4.6, 48, 1, true), new THREE.ShaderMaterial({ uniforms: beamU,
     vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
     fragmentShader: `uniform float uTime; uniform vec3 uColor; varying vec2 vUv;
-      void main(){ float s = .5 + .5*sin(vUv.y*60. - uTime*4.); float v = pow(1. - vUv.y, 1.6);
+      void main(){ float s = .5 + .5*sin(vUv.y*60. - uTime*4.); float v = pow(clamp(1. - vUv.y, 0., 1.), 1.6);
         float stripe = .5 + .5*sin(vUv.x*6.2832*24.);
         gl_FragColor = vec4(uColor * v * (.05 + .07*s) * (.6 + .4*stripe), 1.); }`,
     transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));

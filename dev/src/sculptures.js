@@ -20,7 +20,7 @@ export function buildPaths(scene, reduced) {
     const u = { uTime: { value: 0 }, uColor: { value: new THREE.Color(def.color).multiplyScalar(2.0) }, uHot: { value: 0 } };
     const vtx = `varying vec2 vUv; varying vec3 vN; varying vec3 vV;
       void main(){ vUv = uv; vec4 mv = modelViewMatrix*vec4(position,1.); vN = normalize(normalMatrix*normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix*mv; }`;
-    const flow = `float flowAt(float p){ float f = fract(p*5. - uTime*(.25+uHot*.9)); return pow(f, 10.)*smoothstep(1.,.96,f); }`;
+    const flow = `float flowAt(float p){ float f = fract(p*5. - uTime*(.25+uHot*.9)); return pow(clamp(f, 0., 1.), 10.)*(1. - smoothstep(.96, 1., f)); }`;
     const mat = new THREE.ShaderMaterial({ uniforms: u, vertexShader: vtx,
       fragmentShader: `uniform float uTime; uniform vec3 uColor; uniform float uHot; varying vec2 vUv; varying vec3 vN; varying vec3 vV; ${flow}
         void main(){ float c = abs(dot(vN, vV)); float fl = flowAt(vUv.x);
@@ -28,7 +28,7 @@ export function buildPaths(scene, reduced) {
           gl_FragColor = vec4(col, 1.); }` });
     const halo = new THREE.ShaderMaterial({ uniforms: u, vertexShader: vtx,
       fragmentShader: `uniform float uTime; uniform vec3 uColor; uniform float uHot; varying vec2 vUv; varying vec3 vN; varying vec3 vV; ${flow}
-        void main(){ float c = pow(abs(dot(vN, vV)), 2.5);
+        void main(){ float c = pow(clamp(abs(dot(vN, vV)), 0., 1.), 2.5);
           float a = c * ((.06 + .08*uHot) + flowAt(vUv.x)*(.15 + .45*uHot));
           gl_FragColor = vec4(uColor * a, 1.); }`,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
@@ -69,15 +69,6 @@ export function buildPaths(scene, reduced) {
       portMat.opacity = 0.45 + 0.55 * hot;
     });
 
-    const sc = new THREE.Group(); sc.position.copy(S); scene.add(sc);
-    sc.add(cyl(1.0, 1.15, 0.4, std('#ffffff'), 40, 0, 0.2, 0));
-    sc.add(cyl(1.02, 1.02, 0.08, std(def.color), 40, 0, 0.36, 0));
-    const lip = new THREE.Mesh(new THREE.TorusGeometry(1.02, 0.035, 6, 48), neon(def.color, 2.6)); lip.rotation.x = Math.PI / 2; lip.position.y = 0.41; sc.add(lip);
-    const glow = new THREE.Mesh(new THREE.CircleGeometry(2.0, 40), new THREE.MeshBasicMaterial({ color: new THREE.Color(def.color).multiplyScalar(0.6), transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false, map: glowTex() }));
-    glow.rotation.x = -Math.PI / 2; glow.position.y = 0.05; sc.add(glow);
-    const inner = new THREE.Group(); inner.position.y = 0.1; sc.add(inner);
-    ups.push(SCULPT[def.key](inner, def.color, reduced));
-    if (diag) sc.rotation.y = Math.PI / 4;
   }
   return { ups, pathMats };
 }

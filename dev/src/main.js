@@ -106,6 +106,10 @@ function approach(r) {
   const R0 = diag ? new THREE.Vector3(Math.sign(w.x) * RING, 0, Math.sign(w.z) * RING) : w.clone().multiplyScalar(RING);
   const perp = new THREE.Vector3(-w.z, 0, w.x).multiplyScalar(1.8);
   const S = new THREE.Vector3(r.def.gx * 12, 0, r.def.gz * 12);
+  if (diag) { // plaza corner → near kerb → zebra over one road → zebra over the other → lab door
+    const sx = Math.sign(w.x), sz = Math.sign(w.z), n = 12 - 3.4, f = 12 + 3.4;
+    return { s: ringParam(R0), pts: [new THREE.Vector3(sx * n, 0, sz * n), new THREE.Vector3(sx * f, 0, sz * n), new THREE.Vector3(sx * f, 0, sz * f), doorOut(r), doorIn(r)] };
+  }
   return { s: ringParam(R0), pts: [R0.clone().add(perp), S.clone().add(perp), doorOut(r), doorIn(r)] };
 }
 
@@ -164,8 +168,8 @@ class Agent {
     const r = Math.random();
     let target, troom = null, inter = [], sit = null;
     if (r < 0.55) { // somewhere on the plaza around the digital twin
-      const a = rand(0, Math.PI * 2), rr = rand(8.2, 9.6); target = new THREE.Vector3(Math.sin(a) * rr, 0, Math.cos(a) * rr);
-      target.x = Math.max(-9.6, Math.min(9.6, target.x)); target.z = Math.max(-9.6, Math.min(9.6, target.z));
+      const a = rand(0, Math.PI * 2), rr = rand(7.4, 8.4); target = new THREE.Vector3(Math.sin(a) * rr, 0, Math.cos(a) * rr);
+      target.x = Math.max(-RING, Math.min(RING, target.x)); target.z = Math.max(-RING, Math.min(RING, target.z));
     } else if (r < 0.75) { // front desk: sofa or counter
       troom = lobby;
       if (Math.random() < 0.55) { const so = lobby.sofas[(Math.random() * 2) | 0]; target = toW(lobby, so.p); inter = [toW(lobby, new THREE.Vector3(so.p.x * 0.6, 0.2, 3.8)), target]; sit = lobby.group.rotation.y + so.yaw; }
@@ -196,7 +200,9 @@ class Agent {
       else {
         const dx = tgt.x - this.pos.x, dz = tgt.z - this.pos.z, d = Math.hypot(dx, dz);
         const step = this.speed * dt;
-        if (d <= step) { this.pos.x = tgt.x; this.pos.z = tgt.z; this.path.shift(); }
+        const nx = d <= step ? tgt.x : this.pos.x + (dx / d) * step, nz = d <= step ? tgt.z : this.pos.z + (dz / d) * step;
+        if (!world.canStep(this.pos.x, this.pos.z, nx, nz, 1.0)) { anim = 'idle'; this.yawT = Math.atan2(dx, dz); } // wait at the kerb
+        else if (d <= step) { this.pos.x = tgt.x; this.pos.z = tgt.z; this.path.shift(); }
         else { this.pos.x += (dx / d) * step; this.pos.z += (dz / d) * step; this.yawT = Math.atan2(dx, dz); }
       }
     } else if (this.mode === 'sit' || this.mode === 'sitwait' || this.mode === 'lounge') {
@@ -223,10 +229,11 @@ class Agent {
 
 const agents = ROOMS.map((def, i) => { const c = createCreature(def); c.root.scale.setScalar(1.3); c.root.traverse((o) => { if (o.isMesh) o.castShadow = true; }); return new Agent(c, rooms[i], i); });
 const nova = new Agent(createNova(), lobby, 7);
+world.obstacles.push(...agents.map((a) => ({ pos: a.pos, r: 1.0 })), { pos: nova.pos, r: 0.9 }); // cars yield to agents
 nova.c.root.traverse((o) => { if (o.isMesh) o.castShadow = true; });
 nova.wander = function () {
   const r = Math.random(); let target, troom = null, inter = [];
-  if (r < 0.5) { const def = ROOMS[(Math.random() * 7) | 0]; target = new THREE.Vector3(def.gx * 9.6, 0, def.gz * 9.6); }
+  if (r < 0.5) { const def = ROOMS[(Math.random() * 7) | 0]; target = new THREE.Vector3(def.gx * RING, 0, def.gz * RING); }
   else if (r < 0.8) target = ringPoint(rand(0, PER));
   else { troom = lobby; target = toW(lobby, new THREE.Vector3(2.4, 0.2, 4.2)); inter = [target]; }
   this.go(this.plan(target, troom, inter), 1.25, () => { this.mode = 'pause'; this.pause = rand(2.5, 6); this.yawT = Math.atan2(-this.pos.x, -this.pos.z); });
