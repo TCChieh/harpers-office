@@ -1,0 +1,7 @@
+{
+  "name": "harpers-office",
+  "version": "1.0.0",
+  "description": "A neon 3D isometric office where each running Claude Code session is an elemental creature manager. Open it with /office.",
+  "author": { "name": "Harper" },
+  "license": "MIT"
+}
