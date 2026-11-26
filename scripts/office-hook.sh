@@ -3,62 +3,50 @@
 # Called by Claude Code command hooks. Reads the hook JSON on stdin and writes
 # ~/.claude/lets-office/roster.js. Stores ONLY: session id, project folder
 # name, status, process id, start/update time. Never stores prompt content.
+#
+# Written almost entirely with bash built-ins: on Windows (Git Bash) every
+# external program costs ~0.1 s, and hooks run on every tool call.
 # Must stay silent on stdout (SessionStart/UserPromptSubmit stdout is fed to Claude).
 
 exec 1>/dev/null 2>/dev/null
-[ -n "${LETS_OFFICE_DEBUG:-}" ] && exec 2>>"${LETS_OFFICE_DIR:-$HOME/.claude/lets-office}/hook.log" && set -x
-set -u
-
 OFFICE_DIR="${LETS_OFFICE_DIR:-$HOME/.claude/lets-office}"
+[ -n "${LETS_OFFICE_DEBUG:-}" ] && exec 2>>"$OFFICE_DIR/hook.log" && set -x
 STATE="$OFFICE_DIR/state.tsv"
 ROSTER="$OFFICE_DIR/roster.js"
-LOCK="$OFFICE_DIR/.lock"
-mkdir -p "$OFFICE_DIR" || exit 0
+LOCK="$OFFICE_DIR/.hooklock"   # (v1 used a .lock directory; a different name avoids a stuck leftover)
+TAB=$'\t'
+[ -d "$OFFICE_DIR" ] || mkdir -p "$OFFICE_DIR" || exit 0
 
-INPUT="$(cat 2>/dev/null | head -c 200000)"
+IFS= read -r -d '' INPUT   # whole stdin, no external `cat`
 
-# ---- field extraction: jq -> a python that really runs -> sed (top-level string fields only) ----
-# Windows ships "python3"/"python" stubs that only open the Microsoft Store, so test before trusting one.
-PY=""
-for c in python3 python; do
-  if command -v "$c" >/dev/null 2>&1 && [ "$("$c" -c 'print(42)' 2>/dev/null)" = "42" ]; then PY="$c"; break; fi
-done
-HAS_JQ=0; command -v jq >/dev/null 2>&1 && [ "$(echo '{"a":1}' | jq -r .a 2>/dev/null)" = "1" ] && HAS_JQ=1
+# first (top-level) "key": "string" in the JSON — pure bash regex, no jq/python needed
 get() {
-  local key="$1"
-  if [ "$HAS_JQ" = 1 ]; then
-    printf '%s' "$INPUT" | jq -r --arg k "$key" '.[$k] // empty | if type=="string" then . else empty end' 2>/dev/null
-  elif [ -n "$PY" ]; then
-    printf '%s' "$INPUT" | "$PY" -c 'import sys,json
-try:
-  v=json.load(sys.stdin).get(sys.argv[1],"")
-  print(v if isinstance(v,str) else "")
-except Exception: pass' "$key" 2>/dev/null
-  else
-    printf '%s' "$INPUT" | tr '\n\r' '  ' | sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1
-  fi
+  local re="\"$1\"[[:space:]]*:[[:space:]]*\"(([^\"\\\\]|\\\\.)*)\""
+  if [[ $INPUT =~ $re ]]; then REPLY="${BASH_REMATCH[1]}"; else REPLY=""; fi
 }
 
-EVENT="$(get hook_event_name)"
-SID="$(get session_id | tr -cd 'A-Za-z0-9_-' | cut -c1-64)"
+get hook_event_name; EVENT="$REPLY"
+get session_id;      SID="${REPLY//[^A-Za-z0-9_-]/}"; SID="${SID:0:64}"
 [ -n "$EVENT" ] && [ -n "$SID" ] || exit 0
-CWD="$(get cwd)"; [ -n "$CWD" ] || CWD="${CLAUDE_PROJECT_DIR:-}"
-PROJECT=""
-# Windows paths (C:\\Users\\x or C:\Users\x) → forward slashes before taking the folder name
-CWD="$(printf '%s' "$CWD" | sed 's/\\\\/\//g; s/\\/\//g; s/\/*$//')"
-[ -n "$CWD" ] && PROJECT="$(basename "$CWD" | tr -d '\t\r\n"\\<>`$' | cut -c1-48)"
-NOW="$(date +%s)"
 
-# ---- find the long-lived Claude Code process (walk up from our parent) ----
+get cwd; CWD="$REPLY"; [ -n "$CWD" ] || CWD="${CLAUDE_PROJECT_DIR:-}"
+CWD="${CWD//\\\"/}"; CWD="${CWD//\\\\//}"; CWD="${CWD//\\//}"    # Windows C:\\Users\\x → C:/Users/x
+while [ "${CWD%/}" != "$CWD" ]; do CWD="${CWD%/}"; done
+PROJECT="${CWD##*/}"
+PROJECT="${PROJECT//[$'\t\r\n"\\<>`$']/}"; PROJECT="${PROJECT:0:48}"
+
+if [ -n "${EPOCHSECONDS:-}" ]; then NOW=$EPOCHSECONDS; else NOW=$(date +%s); fi
+
+# ---- the long-lived Claude Code process (only looked up on SessionStart) ----
 find_pid() {
-  local p="$PPID" i=0 args first parent
+  case "${OSTYPE:-}" in msys*|cygwin*|win*) echo 0; return;; esac  # Git Bash can't see Windows process args
+  local p="$PPID" i=0 args first
   while [ "$i" -lt 8 ] && [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null; do
     args="$(ps -o args= -p "$p" 2>/dev/null)"
     first="${args%% *}"; first="${first##*/}"
     case "$first" in claude|claude.exe) echo "$p"; return;; esac
     case "$args" in *@anthropic-ai/claude-code*) echo "$p"; return;; esac
-    parent="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
-    p="$parent"; i=$((i+1))
+    p="$(ps -o ppid= -p "$p" 2>/dev/null)"; p="${p// /}"; i=$((i+1))
   done
   echo 0   # unknown: never prune by pid, only by 12h silence
 }
@@ -68,80 +56,79 @@ STATUS=""
 case "$EVENT" in
   SessionStart)      STATUS="idle" ;;
   UserPromptSubmit)  STATUS="working" ;;
-  PreToolUse)
-    case "$(get tool_name)" in AskUserQuestion) STATUS="waiting" ;; *) STATUS="working" ;; esac ;;
+  PreToolUse)        get tool_name; [ "$REPLY" = "AskUserQuestion" ] && STATUS="waiting" || STATUS="working" ;;
   PostToolUse)       STATUS="working" ;;
   Notification)
-    NTYPE="$(get notification_type)"
-    case "$NTYPE" in
+    get notification_type
+    case "$REPLY" in
       permission_prompt|elicitation_dialog) STATUS="waiting" ;;
-      idle_prompt|auth_success) STATUS="" ;;
-      "")  # older Claude Code: fall back on the fixed notification wording
-        case "$(get message)" in *permission*|*Permission*|*approve*) STATUS="waiting" ;; esac ;;
+      "") get message; case "$REPLY" in *permission*|*Permission*|*approve*) STATUS="waiting" ;; esac ;;
     esac ;;
   Stop)              STATUS="idle" ;;
   SessionEnd)        STATUS="remove" ;;
 esac
 
-# ---- lock (mkdir is atomic everywhere, incl. macOS) ----
-i=0
-until mkdir "$LOCK" 2>/dev/null; do
-  i=$((i+1)); [ "$i" -gt 40 ] && { rm -rf "$LOCK"; i=0; continue; }  # stale lock after ~2s
+# ---- lock: noclobber create is atomic and needs no external program ----
+tries=0
+set -C
+until { : > "$LOCK"; } 2>/dev/null; do
+  tries=$((tries+1))
+  if [ "$tries" -gt 60 ]; then rm -rf "$LOCK"; tries=0; continue; fi   # stale lock (~3 s)
   sleep 0.05
 done
-trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+set +C
+trap 'rm -f "$LOCK"' EXIT
 
-touch "$STATE"
-TMP="$STATE.$$"
-
-# Existing record for this session?  columns: id project status pid started updated
-OLD="$(awk -F'\t' -v id="$SID" '$1==id{print; exit}' "$STATE")"
-
-if [ "$STATUS" = "remove" ]; then
-  awk -F'\t' -v id="$SID" '$1!=id' "$STATE" > "$TMP" && mv "$TMP" "$STATE"
-else
-  if [ -n "$OLD" ]; then
-    OSTATUS="$(printf '%s' "$OLD" | cut -f3)"; OPID="$(printf '%s' "$OLD" | cut -f4)"
-    OSTART="$(printf '%s' "$OLD" | cut -f5)"
-    [ -n "$PROJECT" ] || PROJECT="$(printf '%s' "$OLD" | cut -f2)"
-    [ -n "$STATUS" ] || STATUS="$OSTATUS"
-    PID="$OPID"; START="$OSTART"
-    if [ "$EVENT" = "SessionStart" ]; then PID="$(find_pid)"; fi
-  else
-    [ -n "$STATUS" ] || STATUS="idle"
-    PID="$(find_pid)"; START="$NOW"
-  fi
-  [ -n "$PROJECT" ] || PROJECT="~"
-  awk -F'\t' -v id="$SID" '$1!=id' "$STATE" > "$TMP"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$SID" "$PROJECT" "$STATUS" "$PID" "$START" "$NOW" >> "$TMP"
-  mv "$TMP" "$STATE"
+# ---- read state, update this session, prune dead ones (all in bash) ----
+ids=(); projs=(); sts=(); pids=(); starts=(); upds=()
+found=0
+if [ -f "$STATE" ]; then
+  while IFS="$TAB" read -r id proj st pid start upd; do
+    [ -n "$id" ] || continue
+    if [ "$id" = "$SID" ]; then
+      found=1
+      [ "$STATUS" = "remove" ] && continue
+      [ -n "$PROJECT" ] || PROJECT="$proj"
+      [ -n "$STATUS" ] || STATUS="$st"
+      [ "$EVENT" = "SessionStart" ] && pid="$(find_pid)"
+      st="$STATUS"; proj="$PROJECT"; upd="$NOW"
+    else
+      alive=1
+      if [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null; then kill -0 "$pid" 2>/dev/null || alive=0; fi
+      [ $((NOW - ${upd:-0})) -gt 43200 ] && alive=0
+      [ "$alive" = 1 ] || continue
+    fi
+    ids+=("$id"); projs+=("$proj"); sts+=("$st"); pids+=("${pid:-0}"); starts+=("${start:-$NOW}"); upds+=("${upd:-$NOW}")
+  done < "$STATE"
+fi
+if [ "$found" = 0 ] && [ "$STATUS" != "remove" ]; then
+  ids+=("$SID"); projs+=("${PROJECT:-~}"); sts+=("${STATUS:-idle}"); pids+=("$(find_pid)"); starts+=("$NOW"); upds+=("$NOW")
 fi
 
-# ---- prune sessions whose process is gone (or silent for 12h) ----
-: > "$TMP"
-while IFS="$(printf '\t')" read -r id proj st pid start upd; do
-  [ -n "$id" ] || continue
-  alive=1
-  if [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null; then kill -0 "$pid" 2>/dev/null || alive=0; fi
-  [ $((NOW - ${upd:-0})) -gt 43200 ] && alive=0
-  [ "$id" = "$SID" ] && [ "$STATUS" != "remove" ] && alive=1
-  [ "$alive" = 1 ] && printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$proj" "$st" "$pid" "$start" "$upd" >> "$TMP"
-done < "$STATE"
-mv "$TMP" "$STATE"
+# ---- sort by start time (insertion sort on a handful of rows) ----
+n=${#ids[@]}
+order=()
+for ((i = 0; i < n; i++)); do
+  j=${#order[@]}; order+=("$i")
+  while [ "$j" -gt 0 ] && [ "${starts[${order[$((j-1))]}]}" -gt "${starts[$i]}" ] 2>/dev/null; do
+    order[$j]=${order[$((j-1))]}; j=$((j-1))
+  done
+  order[$j]=$i
+done
 
-# ---- render roster.js (sorted by start time => seat order) ----
-{
-  printf 'window.LETS_OFFICE_ROSTER={"updated":%s,"sessions":[' "$NOW"
-  sort -t "$(printf '\t')" -k5,5n "$STATE" | awk -F'\t' 'BEGIN{n=0}
-    NF>=6 { if(n++) printf ",";
-      printf "{\"id\":\"%s\",\"project\":\"%s\",\"status\":\"%s\",\"pid\":%d,\"started\":%d,\"updated\":%d}", $1,$2,$3,$4+0,$5+0,$6+0 }'
-  printf ']};\n'
-} > "$ROSTER.$$" && mv "$ROSTER.$$" "$ROSTER"
+state_out=""; js=""
+for k in "${order[@]}"; do
+  state_out+="${ids[$k]}$TAB${projs[$k]}$TAB${sts[$k]}$TAB${pids[$k]}$TAB${starts[$k]}$TAB${upds[$k]}"$'\n'
+  [ -n "$js" ] && js+=","
+  js+="{\"id\":\"${ids[$k]}\",\"project\":\"${projs[$k]}\",\"status\":\"${sts[$k]}\",\"pid\":$((${pids[$k]:-0}+0)),\"started\":$((${starts[$k]:-0}+0)),\"updated\":$((${upds[$k]:-0}+0))}"
+done
+printf '%s' "$state_out" > "$STATE"
+printf 'window.LETS_OFFICE_ROSTER={"updated":%s,"sessions":[%s]};\n' "$NOW" "$js" > "$ROSTER"
 
 # ---- keep the page next to roster.js so it can load it over file:// ----
 if [ "$EVENT" = "SessionStart" ] && [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "$CLAUDE_PLUGIN_ROOT/office/index.html" ]; then
   if ! cmp -s "$CLAUDE_PLUGIN_ROOT/office/index.html" "$OFFICE_DIR/index.html"; then
-    cp "$CLAUDE_PLUGIN_ROOT/office/index.html" "$OFFICE_DIR/index.html.$$" && mv "$OFFICE_DIR/index.html.$$" "$OFFICE_DIR/index.html"
+    cp "$CLAUDE_PLUGIN_ROOT/office/index.html" "$OFFICE_DIR/index.html"
   fi
 fi
 exit 0
