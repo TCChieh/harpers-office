@@ -9,26 +9,65 @@ export function buildPaths(scene, reduced) {
   for (const def of ROOMS) {
     const dir = new THREE.Vector3(def.gx, 0, def.gz).normalize();
     const diag = def.gx !== 0 && def.gz !== 0;
-    const A = dir.clone().multiplyScalar(7.6);                                   // edge of the breathing ring
-    const B = new THREE.Vector3(def.gx * G, 0, def.gz * G).addScaledVector(dir, -(ROOM + 0.4)); // just outside the door
+    const B = new THREE.Vector3(def.gx * G, 0, def.gz * G).addScaledVector(dir, -(ROOM + 0.6)); // just outside the door
     const S = new THREE.Vector3(def.gx * 12, 0, def.gz * 12);                    // street / intersection centre
-    const L = A.distanceTo(B);
-    const mat = new THREE.ShaderMaterial({
-      uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(def.color).multiplyScalar(2.0) }, uHot: { value: 0 } },
-      vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
-      fragmentShader: `uniform float uTime; uniform vec3 uColor; uniform float uHot; varying vec2 vUv;
-        void main(){ float edge = smoothstep(.5,.0,abs(vUv.x-.5));
-          float f = fract(vUv.y*9. - uTime*(.5+uHot*1.5));
-          float dash = smoothstep(.0,.35,f)*smoothstep(1.,.65,f);
-          float a = edge*(.4 + .6*dash) * (.75+uHot*.6);
-          gl_FragColor = vec4(uColor*a, 1.); }`,
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    });
+    // Data conduit: leaves the twin's bezel, arcs over the street sculpture and lands in a port at the lab door.
+    const A = dir.clone().multiplyScalar(5.9).setY(1.25);
+    const H = diag ? 7.2 : 6.0;
+    const curve = new THREE.CubicBezierCurve3(
+      A, A.clone().addScaledVector(dir, 1.2).setY(H),
+      B.clone().addScaledVector(dir, -4.5).setY(H * 0.85), B.clone().setY(0.08));
+    const u = { uTime: { value: 0 }, uColor: { value: new THREE.Color(def.color).multiplyScalar(2.0) }, uHot: { value: 0 } };
+    const vtx = `varying vec2 vUv; varying vec3 vN; varying vec3 vV;
+      void main(){ vUv = uv; vec4 mv = modelViewMatrix*vec4(position,1.); vN = normalize(normalMatrix*normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix*mv; }`;
+    const flow = `float flowAt(float p){ float f = fract(p*5. - uTime*(.25+uHot*.9)); return pow(f, 10.)*smoothstep(1.,.96,f); }`;
+    const mat = new THREE.ShaderMaterial({ uniforms: u, vertexShader: vtx,
+      fragmentShader: `uniform float uTime; uniform vec3 uColor; uniform float uHot; varying vec2 vUv; varying vec3 vN; varying vec3 vV; ${flow}
+        void main(){ float c = abs(dot(vN, vV)); float fl = flowAt(vUv.x);
+          vec3 col = uColor*(.5 + .35*uHot)*(.6 + .4*c) + vec3(1.6)*fl*(.35 + .9*uHot);
+          gl_FragColor = vec4(col, 1.); }` });
+    const halo = new THREE.ShaderMaterial({ uniforms: u, vertexShader: vtx,
+      fragmentShader: `uniform float uTime; uniform vec3 uColor; uniform float uHot; varying vec2 vUv; varying vec3 vN; varying vec3 vV; ${flow}
+        void main(){ float c = pow(abs(dot(vN, vV)), 2.5);
+          float a = c * ((.06 + .08*uHot) + flowAt(vUv.x)*(.15 + .45*uHot));
+          gl_FragColor = vec4(uColor * a, 1.); }`,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    const ground = new THREE.ShaderMaterial({ uniforms: u, vertexShader: vtx,
+      fragmentShader: `uniform float uTime; uniform vec3 uColor; uniform float uHot; varying vec2 vUv; varying vec3 vN; varying vec3 vV;
+        void main(){ float e = 1. - abs(vUv.x - .5)*2.; e = e*e;
+          gl_FragColor = vec4(uColor * e * (.05 + .07*uHot), 1.); }`,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
     pathMats.push(mat);
-    const holder = new THREE.Group(); holder.position.copy(A); holder.rotation.y = Math.atan2(B.x - A.x, B.z - A.z); scene.add(holder);
-    const strip = new THREE.Mesh(new THREE.PlaneGeometry(0.5, L), mat);
-    strip.rotation.x = -Math.PI / 2; strip.rotation.z = Math.PI; strip.position.set(0, 0.06, L / 2); holder.add(strip);
-    ups.push((t) => { mat.uniforms.uTime.value = t * (reduced ? 0.3 : 1); });
+    scene.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 160, 0.065, 10, false), mat));
+    scene.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 120, 0.26, 12, false), halo));
+    // faint footprint on the ground so the arc reads in depth
+    const A0 = A.clone().setY(0), L = A0.distanceTo(B);
+    const holder = new THREE.Group(); holder.position.copy(A0); holder.rotation.y = Math.atan2(B.x - A0.x, B.z - A0.z); scene.add(holder);
+    const strip = new THREE.Mesh(new THREE.PlaneGeometry(1.4, L), ground);
+    strip.rotation.x = -Math.PI / 2; strip.position.set(0, 0.04, L / 2); holder.add(strip);
+    // port at the lab door
+    const port = new THREE.Group(); port.position.copy(B).setY(0.05); scene.add(port);
+    const portMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(def.color).multiplyScalar(1.6), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    const pr = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.5, 40), portMat); pr.rotation.x = -Math.PI / 2; port.add(pr);
+    const pulseMat = portMat.clone();
+    const pulse = new THREE.Mesh(new THREE.RingGeometry(0.46, 0.52, 40), pulseMat); pulse.rotation.x = -Math.PI / 2; port.add(pulse);
+    port.add(cyl(0.16, 0.2, 0.12, neon(def.color, 2.4), 16, 0, 0.06, 0));
+    // data packets riding the conduit while the lab is busy
+    const pk = particles(4, def.color, 0.5); scene.add(pk.pts);
+    const tmp = new THREE.Vector3();
+    ups.push((t) => {
+      const tt = t * (reduced ? 0.3 : 1), hot = u.uHot.value;
+      u.uTime.value = tt;
+      for (let k = 0; k < 4; k++) {
+        const f = ((tt * (0.12 + hot * 0.18)) + k / 4) % 1;
+        curve.getPointAt(f, tmp); pk.pos.set([tmp.x, tmp.y, tmp.z], k * 3);
+        pk.sz[k] = 0.9; pk.al[k] = hot * Math.sin(Math.PI * f);
+      }
+      pk.commit();
+      const pf = (tt * (0.5 + hot)) % 1;
+      pulse.scale.setScalar(1 + pf * (1.2 + hot * 1.5)); pulseMat.opacity = (1 - pf) * (0.25 + 0.75 * hot);
+      portMat.opacity = 0.45 + 0.55 * hot;
+    });
 
     const sc = new THREE.Group(); sc.position.copy(S); scene.add(sc);
     sc.add(cyl(1.0, 1.15, 0.4, std('#ffffff'), 40, 0, 0.2, 0));

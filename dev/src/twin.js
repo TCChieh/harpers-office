@@ -9,13 +9,38 @@ export function buildTwin(scene, reduced) {
   const g = new THREE.Group(); scene.add(g);
   const TOP = 1.15, R = 5.4;
 
-  // table
-  const base = new THREE.Mesh(new THREE.CylinderGeometry(R + 0.3, R + 0.7, TOP, 64), std('#eef1fa'));
-  base.position.y = TOP / 2; base.castShadow = base.receiveShadow = true; g.add(base);
-  const band = new THREE.Mesh(new THREE.CylinderGeometry(R + 0.72, R + 0.72, 0.22, 64, 1, true), std('#2b3350')); band.position.y = 0.3; g.add(band);
-  const rimMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(R + 0.32, 0.07, 8, 96), rimMat); rim.rotation.x = Math.PI / 2; rim.position.y = TOP; g.add(rim);
-  const mapTop = new THREE.Mesh(new THREE.CircleGeometry(R + 0.25, 64), std('#dfe6f5')); mapTop.rotation.x = -Math.PI / 2; mapTop.position.y = TOP + 0.01; g.add(mapTop);
+  // pedestal: dark tiered plinth with glowing bezels
+  const dark = std('#1a2142'), darker = std('#10152c');
+  const plinth = new THREE.Mesh(new THREE.CylinderGeometry(R + 1.0, R + 1.25, 0.28, 72), darker); plinth.position.y = 0.14; g.add(plinth);
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(R + 0.35, R + 0.75, TOP - 0.28, 72), dark); body.position.y = 0.28 + (TOP - 0.28) / 2; g.add(body);
+  const rimMat = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(R + 0.33, 0.06, 8, 128), rimMat); rim.rotation.x = Math.PI / 2; rim.position.y = TOP; g.add(rim);
+  const bandMat = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
+  const band = new THREE.Mesh(new THREE.TorusGeometry(R + 0.98, 0.035, 6, 128), bandMat); band.rotation.x = Math.PI / 2; band.position.y = 0.29; g.add(band);
+  // vertical light slits around the body
+  const slitG = new THREE.BoxGeometry(0.07, 0.42, 0.04), SL = 36;
+  const slits = new THREE.InstancedMesh(slitG, bandMat, SL);
+  { const m = new THREE.Matrix4(), qq = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+    for (let i = 0; i < SL; i++) { const a = (i / SL) * Math.PI * 2, rr = R + 0.58;
+      m.compose(new THREE.Vector3(Math.sin(a) * rr, 0.72, Math.cos(a) * rr), qq.setFromAxisAngle(up, a), new THREE.Vector3(1, 1, 1)); slits.setMatrixAt(i, m); } }
+  g.add(slits);
+  // holographic map surface: grid + radar sweep, tinted by the active layer
+  const mapU = { uTime: { value: 0 }, uColor: { value: new THREE.Color() }, uEnv: { value: 0 } };
+  const mapTop = new THREE.Mesh(new THREE.CircleGeometry(R + 0.3, 96), new THREE.ShaderMaterial({ uniforms: mapU,
+    vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
+    fragmentShader: `uniform float uTime; uniform vec3 uColor; uniform float uEnv; varying vec2 vUv;
+      float gridLine(vec2 q){ vec2 d = abs(fract(q - .5) - .5) / fwidth(q); return 1. - min(min(d.x, d.y), 1.); }
+      void main(){ vec2 p = vUv*2. - 1.; float r = length(p);
+        vec3 base = mix(vec3(.05,.08,.18), vec3(.02,.03,.08), r);
+        float fine = gridLine(p*16.)*.35, major = gridLine(p*4.);
+        float ang = atan(p.y, p.x)/6.28318 + .5;
+        float sw = fract(ang - uTime*.12); float sweep = pow(sw, 14.) + smoothstep(.997, 1., sw)*2.;
+        float rings = 0.; for (int i = 1; i < 4; i++) rings += 1. - smoothstep(0., fwidth(r)*1.5, abs(r - float(i)*.25));
+        float edge = smoothstep(.86, .985, r) * (1. - smoothstep(.985, 1., r));
+        vec3 tint = mix(vec3(.35,.55,1.), uColor, .35 + .65*uEnv);
+        vec3 col = base + tint*((fine + major*.6)*.22*(1.-r*.5) + rings*.18 + sweep*.35 + edge*.9);
+        gl_FragColor = vec4(col, 1.); }` }));
+  mapTop.rotation.x = -Math.PI / 2; mapTop.position.y = TOP + 0.01; g.add(mapTop);
 
   // mini city: blocks of tiny buildings
   const N = 13, cell = (R * 1.32) / N;
@@ -27,9 +52,19 @@ export function buildTwin(scene, reduced) {
     cells.push({ x, z, h: 0.1 + Math.pow(Math.random(), 2.4) * 0.75 * (1 - Math.hypot(x, z) / R * 0.6) });
   }
   const bg = new THREE.BoxGeometry(cell * 0.78, 1, cell * 0.78); bg.translate(0, 0.5, 0);
-  const minis = new THREE.InstancedMesh(bg, std('#ffffff'), cells.length);
+  const holoMat = new THREE.ShaderMaterial({
+    vertexShader: `varying vec2 vUv; varying float vH; varying vec3 vCol; varying vec3 vN;
+      void main(){ vUv = uv; vH = position.y; vCol = instanceColor; vN = normal;
+        gl_Position = projectionMatrix*modelViewMatrix*instanceMatrix*vec4(position,1.); }`,
+    fragmentShader: `varying vec2 vUv; varying float vH; varying vec3 vCol; varying vec3 vN;
+      void main(){ float e = min(min(vUv.x, 1.-vUv.x), min(vUv.y, 1.-vUv.y));
+        float edge = 1. - smoothstep(.0, .07, e);
+        float top = step(.5, vN.y), side = .75 + .25*abs(vN.z);
+        vec3 body = mix(vec3(.03,.05,.12), vCol*.5, .15 + .65*vH) * side;
+        gl_FragColor = vec4(body + vCol*(edge*1.3 + top*.55), 1.); }` });
+  const minis = new THREE.InstancedMesh(bg, holoMat, cells.length);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), s = new THREE.Vector3();
-  cells.forEach((c, i) => { m4.compose(v.set(c.x, TOP + 0.02, c.z), q, s.set(1, c.h, 1)); minis.setMatrixAt(i, m4); minis.setColorAt(i, new THREE.Color('#f2f4fb')); });
+  cells.forEach((c, i) => { m4.compose(v.set(c.x, TOP + 0.02, c.z), q, s.set(1, c.h, 1)); minis.setMatrixAt(i, m4); minis.setColorAt(i, new THREE.Color('#6f8cff')); });
   g.add(minis);
 
   // layer extras
@@ -44,10 +79,14 @@ export function buildTwin(scene, reduced) {
   const net = new THREE.LineSegments(netG, new THREE.LineBasicMaterial({ color: new THREE.Color('#ffd23f').multiplyScalar(2.5), transparent: true, opacity: 0 })); g.add(net);
   const plume = particles(90, '#ff9a3c', 0.5); g.add(plume.pts);
 
-  // breathing ring on the plaza floor + projector beam + floating emblem
-  const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-  const ring = new THREE.Mesh(new THREE.RingGeometry(R + 1.3, R + 2.1, 96), ringMat); ring.rotation.x = -Math.PI / 2; ring.position.y = 0.03; g.add(ring);
-  const ringCore = new THREE.Mesh(new THREE.TorusGeometry(R + 1.7, 0.06, 6, 96), new THREE.MeshBasicMaterial({ color: 0xffffff })); ringCore.rotation.x = Math.PI / 2; ringCore.position.y = 0.05; g.add(ringCore);
+  // HUD rings: one hugging the map, one on the plaza floor, one floating under the emblem
+  const hud = hudTex();
+  const hudRing = (size, y, op) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshBasicMaterial({ map: hud, color: 0xffffff, transparent: true, opacity: op, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+    m.rotation.x = -Math.PI / 2; m.position.y = y; g.add(m); return m; };
+  const hudA = hudRing((R + 1.1) * 2, TOP + 0.45, 0.9);
+  const ring = hudRing((R + 2.6) * 2, 0.04, 0.55); const ringMat = ring.material;
+  const hudB = hudRing(5.2, TOP + 3.3, 0.7);
+  const ringCore = new THREE.Mesh(new THREE.TorusGeometry(R + 2.25, 0.03, 6, 128), new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false })); ringCore.rotation.x = Math.PI / 2; ringCore.position.y = 0.05; g.add(ringCore);
   // compass rose marks around the ring (N E S W)
   for (let k = 0; k < 4; k++) { const tri = new THREE.Mesh(new THREE.ConeGeometry(0.35, 0.9, 3), std(k === 0 ? '#ff4d5e' : '#ffffff')); tri.rotation.x = -Math.PI / 2; tri.rotation.z = -k * Math.PI / 2; const a = k * Math.PI / 2; tri.position.set(Math.sin(a) * (R + 2.7), 0.06, -Math.cos(a) * (R + 2.7)); tri.scale.y = 0.15; g.add(tri); }
 
@@ -56,18 +95,27 @@ export function buildTwin(scene, reduced) {
   for (let i = 0; i < 7; i++) {
     const a0 = (i / 7) * Math.PI * 2 - Math.PI / 2, a1 = ((i + 1) / 7) * Math.PI * 2 - Math.PI / 2;
     const p0 = new THREE.Vector3(Math.cos(a0) * ER, Math.sin(a0) * ER, 0), p1 = new THREE.Vector3(Math.cos(a1) * ER, Math.sin(a1) * ER, 0);
-    const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, p0.distanceTo(p1), 8), neon(COLORS[i], 3.4));
+    const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, p0.distanceTo(p1), 8), neon(COLORS[i], 3.4));
     seg.position.copy(p0).add(p1).multiplyScalar(0.5); seg.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), p1.clone().sub(p0).normalize()); emblem.add(seg);
   }
+  const gyro = new THREE.Mesh(new THREE.TorusGeometry(ER + 0.45, 0.018, 6, 128), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.4, 1.5, 1.8), fog: false })); emblem.add(gyro);
+  for (let i = 0; i < 7; i++) { const a = (i / 7) * Math.PI * 2 - Math.PI / 2; emblem.add(sphere(0.13, neon(COLORS[i], 3.2), Math.cos(a) * ER, Math.sin(a) * ER, 0, 12)); }
   const pin = new THREE.Group(); emblem.add(pin); // a map pin in the middle
   pin.add(sphere(0.55, std('#ffffff', { emissive: new THREE.Color('#8fa0ff'), emissiveIntensity: 0.3 }), 0, 0.25, 0, 24));
   const tip = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.9, 24), std('#ffffff', { emissive: new THREE.Color('#8fa0ff'), emissiveIntensity: 0.3 })); tip.rotation.x = Math.PI; tip.position.y = -0.4; pin.add(tip);
   pin.add(sphere(0.22, std('#ff4d5e'), 0, 0.28, 0.42, 12));
-  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.2, R * 0.9, 4.6, 32, 1, true), new THREE.MeshBasicMaterial({ color: 0x9fb8ff, transparent: true, opacity: 0.07, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  const beamU = { uTime: { value: 0 }, uColor: { value: new THREE.Color() } };
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.35, R * 0.8, 4.6, 48, 1, true), new THREE.ShaderMaterial({ uniforms: beamU,
+    vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
+    fragmentShader: `uniform float uTime; uniform vec3 uColor; varying vec2 vUv;
+      void main(){ float s = .5 + .5*sin(vUv.y*60. - uTime*4.); float v = pow(1. - vUv.y, 1.6);
+        float stripe = .5 + .5*sin(vUv.x*6.2832*24.);
+        gl_FragColor = vec4(uColor * v * (.05 + .07*s) * (.6 + .4*stripe), 1.); }`,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
   beam.position.y = TOP + 2.4; g.add(beam);
   const light = new THREE.PointLight(0xffffff, 30, 26, 1.6); light.position.y = 4; g.add(light);
 
-  const cur = new THREE.Color(), col = new THREE.Color(), base0 = new THREE.Color('#f2f4fb'), white = new THREE.Color(1, 1, 1);
+  const cur = new THREE.Color(), col = new THREE.Color(), base0 = new THREE.Color('#5d78e6'), white = new THREE.Color(1, 1, 1);
   const PER = reduced ? 8 : 5;
   const state = { idx: 0, env: 0, color: cur };
   let lastIdx = -1;
@@ -77,11 +125,17 @@ export function buildTwin(scene, reduced) {
       const k = t / PER, idx = Math.floor(k) % 7, f = k - Math.floor(k);
       const env = Math.pow(Math.sin(Math.PI * Math.min(f / 0.94, 1)), 2);
       const c = RAIN[idx]; cur.copy(c);
-      ringMat.color.copy(c).multiplyScalar(0.12 + env * 1.2);
-      ringCore.material.color.copy(c).multiplyScalar(0.3 + env * 2.6);
-      rimMat.color.copy(c).multiplyScalar(0.6 + env * 1.6);
-      light.color.copy(c); light.intensity = 10 + env * 40;
-      beam.material.color.copy(c).lerp(white, 0.4);
+      ringMat.color.copy(c).lerp(white, 0.3).multiplyScalar(0.25 + env * 0.45);
+      ringCore.material.color.copy(c).multiplyScalar(0.35 + env * 1.1);
+      rimMat.color.copy(c).multiplyScalar(0.9 + env * 1.8);
+      bandMat.color.copy(c).multiplyScalar(0.5 + env * 1.2);
+      hudA.material.color.copy(c).lerp(white, 0.25).multiplyScalar(0.5 + env * 0.9);
+      hudB.material.color.copy(c).lerp(white, 0.4).multiplyScalar(0.4 + env * 0.6);
+      hudA.rotation.z = t * (reduced ? 0.02 : 0.08); hudB.rotation.z = -t * (reduced ? 0.04 : 0.22); ring.rotation.z = -t * 0.03;
+      mapU.uTime.value = t * (reduced ? 0.3 : 1); mapU.uColor.value.copy(c); mapU.uEnv.value = env;
+      beamU.uTime.value = t; beamU.uColor.value.copy(c).lerp(white, 0.35).multiplyScalar(1.4);
+      gyro.rotation.x = t * (reduced ? 0.15 : 0.6);
+      light.color.copy(c); light.intensity = 8 + env * 26;
       state.idx = idx; state.env = env;
       if (idx !== lastIdx) { lastIdx = idx; if (state.onLayer) state.onLayer(idx); }
       // colour the mini city by the active layer
@@ -98,7 +152,7 @@ export function buildTwin(scene, reduced) {
           default: w = Math.max(0, 1 - (Math.abs(cc.x) < Math.abs(cc.z) ? Math.abs(cc.x) : Math.abs(cc.z)) / 2.2); // crowding near streets
         }
         col.copy(base0).lerp(c, Math.min(1, w) * (0.35 + env * 0.65));
-        if (w > 0.6) col.multiplyScalar(1 + env * 0.8);
+        if (w > 0.6) col.multiplyScalar(1 + env * 1.1);
         minis.setColorAt(i, col);
       });
       minis.instanceColor.needsUpdate = true;
@@ -126,3 +180,18 @@ export function buildTwin(scene, reduced) {
   };
 }
 export { RING };
+
+let _hud;
+/** Tick-marked HUD ring (white, tinted by material colour). */
+function hudTex() {
+  if (_hud) return _hud;
+  const S = 1024, c = document.createElement('canvas'); c.width = c.height = S;
+  const x = c.getContext('2d'), m = S / 2; x.translate(m, m); x.strokeStyle = '#fff'; x.fillStyle = '#fff';
+  const arc = (r, w, a0, a1, al) => { x.globalAlpha = al; x.lineWidth = w; x.beginPath(); x.arc(0, 0, r, a0, a1); x.stroke(); };
+  arc(m * 0.97, 3, 0, Math.PI * 2, 0.9);
+  for (let i = 0; i < 4; i++) arc(m * 0.92, 7, i * Math.PI / 2 + 0.12, (i + 1) * Math.PI / 2 - 0.12, 0.7);
+  for (let i = 0; i < 180; i++) { const a = (i / 180) * Math.PI * 2, L = i % 15 === 0 ? 0.07 : 0.025; x.globalAlpha = i % 15 === 0 ? 0.9 : 0.45;
+    x.lineWidth = i % 15 === 0 ? 3 : 1.5; x.beginPath(); x.moveTo(Math.cos(a) * m * 0.88, Math.sin(a) * m * 0.88); x.lineTo(Math.cos(a) * m * (0.88 - L), Math.sin(a) * m * (0.88 - L)); x.stroke(); }
+  for (let i = 0; i < 24; i++) arc(m * 0.76, 2, (i / 24) * Math.PI * 2, (i / 24 + 1 / 48) * Math.PI * 2, 0.5);
+  _hud = new THREE.CanvasTexture(c); _hud.anisotropy = 4; return _hud;
+}
