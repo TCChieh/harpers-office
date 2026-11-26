@@ -1,5 +1,5 @@
 ---
-description: 打開 Harper's Office — 即時顯示所有 Claude Code session 的 3D 辦公室
+description: 打開 Harper's Office — 即時顯示所有 Claude Code session 的 3D City Lab
 allowed-tools: Bash(bash:*)
 ---
 !`bash "${CLAUDE_PLUGIN_ROOT}/scripts/open-office.sh"`

@@ -1,37 +1,47 @@
-// Harper's Office — static configuration
-export const COLORS = ['#ff3d5a', '#ff8c2b', '#ffd93d', '#3ee07f', '#2fb6ff', '#5d5cff', '#b84dff'];
+// Harper's Office — City Lab theme
+export const COLORS = ['#ff4d5e', '#ff9a3c', '#ffd23f', '#3fd17a', '#33a8ff', '#6a63ff', '#c35bff'];
 export const COLOR_NAMES = ['紅', '橙', '黃', '綠', '藍', '靛', '紫'];
 
-// Ring layout (radians, 0 = toward default camera / +z)
-const D = Math.PI / 180;
-export const R_ROOM = 27;      // flat back wall line of every office
-export const ROOM_RAD = 8.5;   // half-disc radius
-export const R_DOOR = R_ROOM - ROOM_RAD; // 18.5
-export const R_WALK = 15.8;
-export const R_SCULPT = 12.9;
-export const R_RING = 7.2;
-export const R_FLOOR = 36;
+// 3×3 city grid. Block centres at -G, 0, +G. Centre block = Digital Twin plaza.
+export const G = 24;          // block pitch
+export const BLOCK = 18;      // block size (street = G - BLOCK = 6)
+export const ROOM = 6;        // half-size of a lab footprint (12×12, rounded)
+export const RING = 10.5;     // square walking loop around the plaza (half-size)
+export const CAMPUS = 40;     // half-size of the campus ground
 
+// order = seat order (1st session → Heat, …). gx/gz = grid cell (-1..1)
 export const ROOMS = [
-  { key: 'fire',  el: '火', angle: 90 * D,  name: '焰焰', room: '熔爐工坊',   phen: '火焰',   body: '#ffbfa3',
-    outfit: '鍛造皮圍裙＋護目鏡', role: '產品設計', desc: '鍛爐、熔岩燈與火紋霓虹牆。焰焰把每個點子都先丟進爐子裡燒一次。' },
-  { key: 'wind',  el: '風', angle: 135 * D, name: '嵐嵐', room: '天穹航站',   phen: '龍捲風', body: '#ffe2b8',
-    outfit: '飛行員圍巾', role: '專案協調', desc: '雲朵沙發、望遠鏡與航線地球儀。嵐嵐負責讓所有東西準時起飛。' },
-  { key: 'volt',  el: '電', angle: 180 * D, name: '伏特', room: '伏特戰情室', phen: '閃電',   body: '#bcd2ff',
-    outfit: '值班耳機＋連帽衫', role: '平台工程', desc: '整面監控牆、三螢幕值班桌、機櫃列與系統拓撲投影。全公司的心跳都在這裡。' },
-  { key: 'leaf',  el: '草', angle: 225 * D, name: '芽芽', room: '森息溫室',   phen: '極光',   body: '#bff0cc',
-    outfit: '園藝圍裙＋圓框眼鏡', role: '研究與資料', desc: '植栽牆、盆景與蘑菇燈。芽芽相信所有好系統都是長出來的。' },
-  { key: 'tide',  el: '水', angle: 270 * D, name: '波波', room: '潮汐實驗室', phen: '漩渦',   body: '#b5e6ff',
-    outfit: '水手帽＋雨衣', role: '資料管線', desc: '巨型水族箱與波浪投影。資料從這裡流向每一間辦公室。' },
-  { key: 'psy',   el: '超能', angle: 315 * D, name: '夢夢', room: '星夢研究所', phen: '星雲', body: '#d4c8ff',
-    outfit: '星紋披風', role: 'AI 研究', desc: '水晶球、漂浮光球與星圖書牆。夢夢總是比大家早一步看到答案。' },
-  { key: 'frost', el: '冰', angle: 45 * D,  name: '晶晶', room: '霜晶工作室', phen: '冰晶',   body: '#ece6ff',
-    outfit: '毛線帽＋圍巾', role: '品質與安全', desc: '冰晶叢、雪花球與冷光工作台。晶晶讓每一行程式都冷靜下來。' },
+  { key: 'heat',  type: 'HEAT',  name: 'Toasty', room: 'Heat Lab',  gx: 1,  gz: 0,  phen: 'Flame',
+    body: '#ffd27a', role: 'Heat stress', gadget: 'thermometer',
+    flavor: 'Loves sunny days. Checks the heat index every hour and reminds everyone to drink water.' },
+  { key: 'air',   type: 'AIR',   name: 'Puff',   room: 'Air Lab',   gx: 1,  gz: -1, phen: 'Tornado',
+    body: '#f2f6ff', role: 'Air quality', gadget: 'pinwheel',
+    flavor: 'A small cloud that can smell PM2.5. Gets grumpy when the sky turns grey.' },
+  { key: 'data',  type: 'DATA',  name: 'Byte',   room: 'Data Lab',  gx: 0,  gz: -1, phen: 'Lightning',
+    body: '#9cc3ff', role: 'Platform & on-call', gadget: 'laptop',
+    flavor: 'Never sleeps. Watches every server, every build and every graph at the same time.' },
+  { key: 'green', type: 'GREEN', name: 'Leafy',  room: 'Green Lab', gx: -1, gz: 1,  phen: 'Fireflies',
+    body: '#f3d9b1', role: 'Urban greening', gadget: 'watering can',
+    flavor: 'Plants a tree wherever it walks. Believes every hot street needs more shade.' },
+  { key: 'flood', type: 'FLOOD', name: 'Drip',   room: 'Flood Lab', gx: 1,  gz: 1,  phen: 'Whirlpool',
+    body: '#9fe4ff', role: 'Flood & rain', gadget: 'umbrella',
+    flavor: 'Made of rain. Knows how deep every street gets when the typhoon comes.' },
+  { key: 'sky',   type: 'SKY',   name: 'Orbit',  room: 'Sky Lab',   gx: -1, gz: -1, phen: 'Aurora',
+    body: '#d9d0ff', role: 'Remote sensing', gadget: 'satellite',
+    flavor: 'Has a tiny satellite that follows it around and takes photos of the city from above.' },
+  { key: 'crowd', type: 'CROWD', name: 'Dash',   room: 'Crowd Lab', gx: -1, gz: 0,  phen: 'Bird flock',
+    body: '#ffc6e0', role: 'Crowd simulation', gadget: 'flag',
+    flavor: 'Always in a hurry. Can predict where a thousand people will walk next.' },
 ];
-ROOMS.forEach((r, i) => { r.index = i; r.color = COLORS[i]; });
+ROOMS.forEach((r, i) => { r.index = i; r.color = COLORS[i]; r.no = String(i + 1).padStart(3, '0'); });
 
-export const LOBBY = { key: 'lobby', angle: 0, room: '接待大廳', color: '#e8f1ff', index: 7,
-  desc: '弧形櫃台、等候沙發與漂浮招牌。導覽機器人 NOVA 會在這裡迎接訪客。' };
+export const LOBBY = { key: 'lobby', type: 'DESK', room: 'Front Desk', gx: 0, gz: 1, color: '#eaf2ff', index: 7,
+  desc: 'The way in. Sofas, a round counter and NOVA the guide bot welcome every visitor.' };
 
-export const DEFAULT_COMPANY = "Harper's Office";
+export const LAYERS = [ // digital-twin layers, cycled in rainbow order
+  { name: 'Heat', zh: '地表溫度' }, { name: 'Air', zh: '空氣品質' }, { name: 'Network', zh: '感測網路' },
+  { name: 'Green', zh: '綠覆率' }, { name: 'Flood', zh: '淹水深度' }, { name: 'Satellite', zh: '衛星影像' }, { name: 'Crowd', zh: '人流密度' },
+];
+
+export const DEFAULT_COMPANY = "Harper's City Lab";
 export const STATUS_TEXT = { working: '工作中', waiting: '等你回覆', idle: '閒置', offline: '待命' };

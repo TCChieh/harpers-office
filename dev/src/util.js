@@ -1,24 +1,34 @@
 import * as THREE from 'three';
 
 export const neonRegistry = [];
-export let neonLevel = 1;
+let flick = 1, dayNeon = 1;
+function applyNeon() { const k = flick * dayNeon; for (const { m, base } of neonRegistry) m.color.copy(base).multiplyScalar(k); }
 
-/** Unlit HDR material that blooms. Registered so the intro can flicker every neon at once. */
+/** Unlit HDR material that blooms. Registered so the intro and the day/night cycle can dim every neon at once. */
 export function neon(color, intensity = 2.6, opts = {}) {
   const c0 = new THREE.Color(color);
-  const lum = 0.2126 * c0.r + 0.7152 * c0.g + 0.0722 * c0.b; // perceived brightness: keep yellow/white from flooding the bloom
+  const lum = 0.2126 * c0.r + 0.7152 * c0.g + 0.0722 * c0.b; // keep yellow/white from flooding the bloom
   const norm = Math.min(1.3, Math.max(0.55, Math.sqrt(0.4 / Math.max(lum, 0.15))));
   const base = c0.multiplyScalar(intensity * 0.62 * norm);
   const m = new THREE.MeshBasicMaterial({ color: base.clone(), fog: false, ...opts });
   neonRegistry.push({ m, base });
   return m;
 }
-export function setNeon(k) {
-  neonLevel = k;
-  for (const { m, base } of neonRegistry) m.color.copy(base).multiplyScalar(k);
+export function setNeon(k) { flick = k; applyNeon(); }
+export function setDayNeon(k) { if (Math.abs(k - dayNeon) > 0.002) { dayNeon = k; applyNeon(); } }
+
+// cel-shaded ("anime") look for everything solid
+let _grad;
+function gradient() {
+  if (_grad) return _grad;
+  const d = new Uint8Array([90, 160, 225, 255]);
+  _grad = new THREE.DataTexture(d, 4, 1, THREE.RedFormat); _grad.minFilter = _grad.magFilter = THREE.NearestFilter; _grad.needsUpdate = true;
+  return _grad;
 }
+const DROP = ['roughness', 'metalness', 'envMapIntensity', 'flatShading', 'transmission'];
 export function std(color, o = {}) {
-  return new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.2, ...o });
+  const p = { ...o }; DROP.forEach((k) => delete p[k]);
+  return new THREE.MeshToonMaterial({ color, gradientMap: gradient(), ...p });
 }
 
 export function box(w, h, d, mat, x = 0, y = 0, z = 0) {
@@ -88,16 +98,16 @@ export function textSign(text, color, w = 2.6, h = 0.6, opts = {}) {
   const ct = canvasTex(Math.round(w * px), Math.round(h * px), (ctx, W, H, t = text) => {
     ctx.clearRect(0, 0, W, H);
     if (opts.panel !== false) {
-      ctx.fillStyle = 'rgba(6,10,24,0.82)';
-      roundRect(ctx, 4, 4, W - 8, H - 8, H * 0.22); ctx.fill();
-      ctx.strokeStyle = color; ctx.lineWidth = 5; ctx.stroke();
+      ctx.fillStyle = opts.light ? '#ffffff' : 'rgba(6,10,24,0.82)';
+      roundRect(ctx, 4, 4, W - 8, H - 8, H * 0.3); ctx.fill();
+      ctx.strokeStyle = color; ctx.lineWidth = opts.light ? 10 : 5; ctx.stroke();
     }
     let fs = H * (opts.scale || 0.5);
     ctx.font = `700 ${fs}px ${FONT}`;
     while (ctx.measureText(t).width > W * 0.86 && fs > 10) { fs -= 2; ctx.font = `700 ${fs}px ${FONT}`; }
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.shadowColor = color; ctx.shadowBlur = H * 0.18;
-    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = color; ctx.shadowBlur = opts.light ? 0 : H * 0.18;
+    ctx.fillStyle = opts.light ? '#1b2140' : '#ffffff';
     ctx.fillText(t, W / 2, H / 2 + fs * 0.04);
   });
   const mat = new THREE.MeshBasicMaterial({ map: ct.tex, transparent: true, depthWrite: false, fog: false,

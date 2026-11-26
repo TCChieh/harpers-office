@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="color-scheme" content="dark" />
-<title>Harper's Office</title>
+<title>Harper's City Lab</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@500&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet" />
@@ -165,6 +165,23 @@ dialog input:focus{outline:none;border-color:#8fb0ff;background:rgba(255,255,255
 @keyframes tube{0%{opacity:0}6%{opacity:.9}10%{opacity:.05}22%{opacity:.7}26%{opacity:.1}40%{opacity:1}46%{opacity:.35}58%,100%{opacity:1}}
 #nogl{position:fixed;inset:0;display:grid;place-items:center;text-align:center;padding:24px;z-index:30;background:var(--bg)}
 
+
+/* map legend (bottom-left) */
+#legend{left:20px;bottom:calc(92px + var(--safe-b));padding:12px 14px;display:flex;gap:14px;align-items:center}
+#legend .north{width:34px;height:34px;flex:none}
+#legend-layer{display:flex;flex-direction:column;gap:3px;min-width:118px}
+#legend-layer span{font-family:var(--mono);font-size:10px;letter-spacing:.18em;color:var(--mute)}
+#legend-layer b{font-size:15px;display:flex;align-items:center;gap:8px}
+#legend-layer b::before{content:'';width:12px;height:12px;border-radius:4px;background:var(--c,#fff);box-shadow:0 0 10px var(--c,#fff)}
+#legend-layer small{font-size:11px;color:var(--mute)}
+.scale{display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:10px;color:var(--mute)}
+.scale i{display:block;width:64px;height:6px;border:1.5px solid #cfd8ff;border-top:0;background:linear-gradient(90deg,#cfd8ff 50%,transparent 50%) 0 100%/100% 2px no-repeat}
+/* dex-style header on the info card */
+#card .dex{display:flex;justify-content:space-between;align-items:center;padding-right:40px}
+#card .dex .no{font-family:var(--mono);font-size:12px;color:var(--mute);letter-spacing:.08em}
+#card .dex .type{font-size:11px;font-weight:700;letter-spacing:.12em;padding:4px 10px;border-radius:99px;background:var(--c);color:#0b0f22}
+@media (max-width:1100px){ #legend{display:none} }
+
 /* responsive */
 @media (max-width:900px){
   #roster{top:auto;bottom:calc(84px + var(--safe-b));right:12px;width:min(300px,calc(100vw - 24px));transform:translateY(10px);opacity:0;pointer-events:none;transition:.3s var(--ease)}
@@ -210,7 +227,7 @@ dialog input:focus{outline:none;border-color:#8fb0ff;background:rgba(255,255,255
     </g>
     <polygon points="50,30 64,50 50,72 36,50" fill="#e8ecff" opacity=".9"/>
   </svg>
-  <div class="t"><span id="brand-name">Harper's Office</span><small>Night shift · 42F</small></div>
+  <div class="t"><span id="brand-name">Harper's Office</span><small>City Lab · 25.02°N 121.54°E</small></div>
   <button id="btn-settings" class="icon-btn" type="button" aria-label="設定" title="設定">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
   </button>
@@ -226,6 +243,12 @@ dialog input:focus{outline:none;border-color:#8fb0ff;background:rgba(255,255,255
 <aside id="roster" class="hud panel d2" aria-label="主管名單">
   <h3><span>ROSTER</span><span>7 SEATS</span></h3>
   <ul id="roster-list"></ul>
+</aside>
+
+<aside id="legend" class="hud panel d3" aria-label="地圖圖例">
+  <svg class="north" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="18" fill="none" stroke="rgba(200,210,255,.35)"/><path d="M20 5 L26 22 L20 19 L14 22 Z" fill="#ff4d5e"/><path d="M20 35 L14 22 L20 25 L26 22 Z" fill="#cfd8ff"/><text x="20" y="4" font-size="0" fill="#fff">N</text></svg>
+  <div id="legend-layer"><span>TWIN LAYER</span><b>Heat</b><small>地表溫度</small></div>
+  <div class="scale"><i></i>10 m</div>
 </aside>
 
 <nav id="navwrap" class="hud panel d3" aria-label="房間導覽">
@@ -269,7 +292,7 @@ dialog input:focus{outline:none;border-color:#8fb0ff;background:rgba(255,255,255
       <polygon class="core" points="50,30 64,50 50,72 36,50" fill="#eef0ff" style="filter:drop-shadow(0 0 10px #a99cff)"/>
     </svg>
     <h1 id="intro-title">Harper's Office</h1>
-    <p>CLAUDE CODE · LIVE SESSIONS</p>
+    <p>CLAUDE CODE · CITY LAB</p>
   </div>
   <span class="skip">點一下或按任意鍵跳過</span>
 </div>

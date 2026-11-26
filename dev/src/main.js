@@ -4,12 +4,12 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { ROOMS, LOBBY, COLORS, R_DOOR, R_WALK, R_SCULPT, DEFAULT_COMPANY, STATUS_TEXT } from './config.js';
-import { setNeon, polar, rand, angDiff, easeInOut, sphere, neon, std } from './util.js';
+import { ROOMS, LOBBY, COLORS, LAYERS, G, ROOM, RING, DEFAULT_COMPANY, STATUS_TEXT } from './config.js';
+import { setNeon, rand, angDiff, easeInOut, sphere, std, box } from './util.js';
 import { buildWorld } from './world.js';
+import { buildTwin } from './twin.js';
 import { buildPaths } from './sculptures.js';
-import { buildRooms, buildLobby } from './rooms.js';
+import { buildLabs, buildDesk } from './labs.js';
 import { createCreature, createNova } from './creatures.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -17,9 +17,10 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const params = new URLSearchParams(location.search);
 const DEMO = params.has('demo') || location.hash === '#demo';
 const NO_INTRO = params.has('nointro');
+const HOUR = params.has('hour') ? Math.max(0, Math.min(23.99, parseFloat(params.get('hour')) || 0)) : null;
 
 // ------------------------------------------------------------------ settings
-const SKEY = 'harpers-office:settings:v1';
+const SKEY = 'harpers-office:settings:v2';
 const defaults = () => ({ company: DEFAULT_COMPANY, rooms: ROOMS.map((r) => r.room).concat(LOBBY.room), names: ROOMS.map((r) => r.name) });
 let settings = defaults();
 try {
@@ -39,23 +40,17 @@ try {
 }
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
 renderer.setSize(innerWidth, innerHeight);
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x0b0a22, 110, 430);
-const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environmentIntensity = 0.22;
-scene.add(new THREE.HemisphereLight(0x8a9cff, 0x1a0b2a, 0.75));
-const moon = new THREE.DirectionalLight(0xb8c4ff, 0.9); moon.position.set(-40, 80, -30); scene.add(moon);
-const rim = new THREE.DirectionalLight(0xff7ad9, 0.35); rim.position.set(50, 30, 60); scene.add(rim);
-
-const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.5, 2600);
+const camera = new THREE.PerspectiveCamera(32, innerWidth / innerHeight, 0.5, 2600);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true; controls.dampingFactor = 0.07;
-controls.minDistance = 8; controls.maxDistance = 190;
-controls.minPolarAngle = 0.32; controls.maxPolarAngle = 1.22;
+controls.minDistance = 8; controls.maxDistance = 200;
+controls.minPolarAngle = 0.3; controls.maxPolarAngle = 1.25;
 controls.screenSpacePanning = false;
 controls.rotateSpeed = 0.6; controls.zoomSpeed = 0.8;
 
@@ -63,39 +58,67 @@ const rt = new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.Ha
 const composer = new EffectComposer(renderer, rt);
 composer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
 composer.addPass(new RenderPass(scene, camera));
-const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.72, 0.32, 0.86);
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.6, 0.32, 0.9);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 
-// ------------------------------------------------------------------ build the floor
-const world = buildWorld(scene, reduced);
+// ------------------------------------------------------------------ build the city lab
+const world = buildWorld(scene, reduced, HOUR);
+const twin = buildTwin(scene, reduced);
 const paths = buildPaths(scene, reduced);
-const rooms = buildRooms(scene);
-const lobby = buildLobby(scene, settings.company);
+const rooms = buildLabs(scene);
+const lobby = buildDesk(scene, settings.company);
 const allRooms = [...rooms, lobby];
+scene.traverse((o) => { if (o.isMesh && o.material && o.material.isMeshToonMaterial && !o.material.transparent) { o.castShadow = true; o.receiveShadow = true; } });
 scene.updateMatrixWorld(true);
-const slotRoom = []; // index by 45° slot
-allRooms.forEach((r) => { slotRoom[Math.round(((r.angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) / (Math.PI / 4)) % 8] = r; });
-const toW = (room, v) => room.group.localToWorld(v.clone());
-const roomOf = (p) => {
-  if (Math.hypot(p.x, p.z) < R_DOOR + 0.2) return null;
-  const a = Math.atan2(p.x, p.z);
-  return slotRoom[((Math.round(a / (Math.PI / 4)) % 8) + 8) % 8];
-};
-const doorOut = (r) => polar(R_DOOR - 1.1, r.angle);
-const doorIn = (r) => polar(R_DOOR + 1.1, r.angle);
 
-// sprites above the fountain (original "light sprites")
+const toW = (room, v) => room.group.localToWorld(v.clone());
+const inward = (r) => new THREE.Vector3(-r.def.gx, 0, -r.def.gz).normalize();
+const roomCenter = (r) => new THREE.Vector3(r.def.gx * G, 0, r.def.gz * G);
+const cellRoom = {}; allRooms.forEach((r) => (cellRoom[`${r.def.gx},${r.def.gz}`] = r));
+const roomOf = (p) => {
+  const gx = Math.round(p.x / G), gz = Math.round(p.z / G);
+  const r = cellRoom[`${gx},${gz}`]; if (!r) return null;
+  const l = r.group.worldToLocal(p.clone());
+  return Math.abs(l.x) < ROOM + 0.1 && Math.abs(l.z) < ROOM + 0.1 ? r : null;
+};
+const doorOut = (r) => roomCenter(r).addScaledVector(inward(r), ROOM + 1.4);
+const doorIn = (r) => roomCenter(r).addScaledVector(inward(r), ROOM - 1.4).setY(0.2);
+
+// square walking loop around the plaza (perimeter param s ∈ [0, 8·RING))
+const PER = 8 * RING;
+function ringPoint(s) {
+  s = ((s % PER) + PER) % PER; const L = 2 * RING;
+  if (s < L) return new THREE.Vector3(-RING + s, 0, -RING);
+  if (s < 2 * L) return new THREE.Vector3(RING, 0, -RING + (s - L));
+  if (s < 3 * L) return new THREE.Vector3(RING - (s - 2 * L), 0, RING);
+  return new THREE.Vector3(-RING, 0, RING - (s - 3 * L));
+}
+function ringParam(p) {
+  const L = 2 * RING, x = Math.max(-RING, Math.min(RING, p.x)), z = Math.max(-RING, Math.min(RING, p.z));
+  const c = [[Math.abs(p.z + RING), x + RING], [Math.abs(p.x - RING), L + z + RING], [Math.abs(p.z - RING), 2 * L + RING - x], [Math.abs(p.x + RING), 3 * L + RING - z]];
+  c.sort((a, b) => a[0] - b[0]); return c[0][1];
+}
+/** How a lab is reached from the loop: two points that step around its street sculpture. */
+function approach(r) {
+  const w = inward(r).negate();
+  const diag = r.def.gx !== 0 && r.def.gz !== 0;
+  const R0 = diag ? new THREE.Vector3(Math.sign(w.x) * RING, 0, Math.sign(w.z) * RING) : w.clone().multiplyScalar(RING);
+  const perp = new THREE.Vector3(-w.z, 0, w.x).multiplyScalar(1.8);
+  const S = new THREE.Vector3(r.def.gx * 12, 0, r.def.gz * 12);
+  return { s: ringParam(R0), pts: [R0.clone().add(perp), S.clone().add(perp), doorOut(r), doorIn(r)] };
+}
+
+// light sprites floating around the emblem
 const sprites = ['#ffc6ec', '#fff1a8'].map((c, i) => {
   const g = new THREE.Group();
-  const body = sphere(0.36, std(c, { emissive: new THREE.Color(c), emissiveIntensity: 0.55, roughness: 0.4 }), 0, 0, 0, 20); g.add(body);
+  const body = sphere(0.36, std(c, { emissive: new THREE.Color(c), emissiveIntensity: 0.4 }), 0, 0, 0, 20); g.add(body);
   for (const s of [-1, 1]) {
-    g.add(sphere(0.045, std(0x141826), s * 0.12, 0.05, 0.32, 8));
-    const w = sphere(0.22, new THREE.MeshBasicMaterial({ color: new THREE.Color(c).multiplyScalar(1.8), transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }), s * 0.36, 0.12, -0.1, 12);
+    g.add(sphere(0.05, std('#141826'), s * 0.12, 0.05, 0.32, 8));
+    const w = sphere(0.22, new THREE.MeshBasicMaterial({ color: new THREE.Color(c).multiplyScalar(1.4), transparent: true, opacity: 0.6, depthWrite: false }), s * 0.36, 0.12, -0.1, 12);
     w.scale.set(1, 0.4, 0.12); w.userData.s = s; g.add(w);
   }
-  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.5, 8), body.material); tail.rotation.x = Math.PI / 2 + 0.4; tail.position.set(0, -0.1, -0.4); g.add(tail);
-  world.fountain.group.add(g);
+  twin.group.add(g);
   return { g, ph: i * Math.PI };
 });
 
@@ -103,41 +126,36 @@ const sprites = ['#ffc6ec', '#fff1a8'].map((c, i) => {
 class Agent {
   constructor(c, room, idx) {
     this.c = c; this.room = room; this.idx = idx;
-    const a = rand(0, Math.PI * 2);
-    this.pos = polar(rand(14.8, 16.8), a);
+    this.pos = ringPoint(rand(0, PER)); this.pos.x += rand(-0.6, 0.6);
     this.yaw = rand(0, 6); this.yawT = this.yaw;
     this.path = []; this.mode = 'pause'; this.pause = rand(0, 2.5); this.speed = 1.5;
     this.status = 'offline'; this.applied = null; this.session = null; this.atSeat = false; this.arrive = null; this.look = 0;
     c.root.position.copy(this.pos); scene.add(c.root);
   }
   seat() { const cu = this.room.custom; return { p: toW(this.room, cu.seat), yaw: this.room.group.rotation.y + cu.seatYaw }; }
+  /** plan a path: leave the current lab → loop around the plaza → enter the target lab (or stop on the plaza) */
   plan(target, troom, interior) {
-    const pts = []; const from = this.pos; let ang;
-    const cur = roomOf(from);
+    const pts = []; const cur = roomOf(this.pos);
+    let s0;
     if (cur) {
-      if (cur === troom) {
-        if (this.atSeat) pts.push(...this.exitWay(cur));
-        return pts.concat(interior.length ? interior : [target]);
-      }
+      if (cur === troom) { if (this.atSeat) pts.push(...this.exitWay(cur)); return pts.concat(interior.length ? interior : [target]); }
       if (this.atSeat) pts.push(...this.exitWay(cur));
-      pts.push(doorIn(cur), doorOut(cur)); ang = cur.angle;
+      const ap = approach(cur); pts.push(...ap.pts.slice().reverse()); s0 = ap.s;
     } else {
-      ang = Math.atan2(from.x, from.z);
-      const r = Math.hypot(from.x, from.z);
-      if (Math.abs(r - R_WALK) > 1.4) pts.push(polar(R_WALK, ang));
+      s0 = ringParam(this.pos); pts.push(ringPoint(s0));
     }
-    const ta = troom ? troom.angle : Math.atan2(target.x, target.z);
-    const d = angDiff(ang, ta); const steps = Math.ceil(Math.abs(d) / 0.16);
-    const rj = rand(-0.5, 0.5);
-    for (let i = 1; i <= steps; i++) pts.push(polar(R_WALK + rj * Math.sin((Math.PI * i) / steps), ang + (d * i) / steps));
-    if (troom) pts.push(doorOut(troom), doorIn(troom), ...(interior.length ? interior : [target]));
-    else pts.push(target);
-    return pts;
+    let s1, tail;
+    if (troom) { const ap = approach(troom); s1 = ap.s; tail = [...ap.pts, ...(interior.length ? interior : [target])]; }
+    else { s1 = ringParam(target); tail = [target]; }
+    let d = s1 - s0; if (d > PER / 2) d -= PER; if (d < -PER / 2) d += PER;
+    const steps = Math.ceil(Math.abs(d) / 1.5);
+    for (let i = 1; i <= steps; i++) pts.push(ringPoint(s0 + (d * i) / steps));
+    return pts.concat(tail);
   }
   exitWay(r) { const w = r.custom.way; return w.slice(0, -1).reverse().map((v) => toW(r, v)); }
   go(pts, speed, onArrive) { this.path = pts; this.speed = speed; this.mode = 'walk'; this.atSeat = false; this.arrive = onArrive; }
   goSeat() {
-    if (this.atSeat) { this.mode = 'sit'; return; }
+    if (this.atSeat && roomOf(this.pos) === this.room) { this.mode = 'sit'; return; }
     const s = this.seat();
     const inter = this.room.custom.way.map((v) => toW(this.room, v));
     this.go(this.plan(s.p, this.room, inter), 4.8, () => { this.atSeat = true; this.mode = 'sit'; this.pos.copy(s.p); this.yawT = s.yaw; });
@@ -145,18 +163,16 @@ class Agent {
   wander() {
     const r = Math.random();
     let target, troom = null, inter = [], sit = null;
-    if (r < 0.62) target = polar(rand(14.6, 17), rand(0, Math.PI * 2));
-    else if (r < 0.8) { // lobby: sofa or counter
+    if (r < 0.55) { // somewhere on the plaza around the digital twin
+      const a = rand(0, Math.PI * 2), rr = rand(8.2, 9.6); target = new THREE.Vector3(Math.sin(a) * rr, 0, Math.cos(a) * rr);
+      target.x = Math.max(-9.6, Math.min(9.6, target.x)); target.z = Math.max(-9.6, Math.min(9.6, target.z));
+    } else if (r < 0.75) { // front desk: sofa or counter
       troom = lobby;
-      if (Math.random() < 0.5) {
-        const s = Math.random() < 0.5 ? -1 : 1;
-        const local = new THREE.Vector3(s * 5.45 + rand(-0.6, 0.6) * Math.cos(0.95), 0, 3.35);
-        target = toW(lobby, local); inter = [toW(lobby, new THREE.Vector3(s * 4.2, 0, 5.6)), target];
-        sit = lobby.group.rotation.y - s * 0.95;
-      } else { target = toW(lobby, new THREE.Vector3(rand(-2.5, 2.5), 0, rand(5.4, 7.4))); inter = [target]; }
-    } else { // visit an office (peek through the door)
+      if (Math.random() < 0.55) { const so = lobby.sofas[(Math.random() * 2) | 0]; target = toW(lobby, so.p); inter = [toW(lobby, new THREE.Vector3(so.p.x * 0.6, 0.2, 3.8)), target]; sit = lobby.group.rotation.y + so.yaw; }
+      else { target = toW(lobby, new THREE.Vector3(rand(-1.5, 1.5), 0.2, rand(3.0, 4.4))); inter = [target]; }
+    } else { // visit a lab (peek in at the door)
       troom = rooms[(Math.random() * rooms.length) | 0];
-      target = toW(troom, new THREE.Vector3(rand(-1.8, 1.8), 0, rand(6.0, 7.2))); inter = [target];
+      target = toW(troom, new THREE.Vector3(rand(-1.0, 1.0), 0.2, rand(3.4, 4.4))); inter = [target];
     }
     const slow = this.status === 'idle' ? 1.75 : 1.35;
     this.go(this.plan(target, troom, inter), slow, () => {
@@ -184,7 +200,7 @@ class Agent {
         else { this.pos.x += (dx / d) * step; this.pos.z += (dz / d) * step; this.yawT = Math.atan2(dx, dz); }
       }
     } else if (this.mode === 'sit' || this.mode === 'sitwait' || this.mode === 'lounge') {
-      anim = this.mode === 'lounge' ? 'sit' : 'sit';
+      anim = 'sit';
       if (this.mode === 'lounge') { this.pause -= dt; if (this.pause <= 0 && this.status !== 'working' && this.status !== 'waiting') this.wander(); }
     } else if (this.mode === 'wait') {
       anim = 'wait';
@@ -196,20 +212,23 @@ class Agent {
         else if (this.status !== 'waiting') this.wander();
       }
     }
+    // step up onto lab floors
+    const fy = roomOf(this.pos) ? 0.2 : 0; this.pos.y += (fy - this.pos.y) * Math.min(1, dt * 12);
     this.yaw += angDiff(this.yaw, this.yawT) * Math.min(1, dt * 9);
     this.c.root.position.copy(this.pos);
     this.c.root.rotation.y = this.yaw;
-    this.c.animate(t, dt, anim === 'sit' && this.mode === 'lounge' ? 'sit' : anim, this.speed, reduced);
+    this.c.animate(t, dt, anim, this.speed, reduced);
   }
 }
 
-const agents = ROOMS.map((def, i) => { const c = createCreature(def); c.root.scale.setScalar(1.3); return new Agent(c, rooms[i], i); });
+const agents = ROOMS.map((def, i) => { const c = createCreature(def); c.root.scale.setScalar(1.3); c.root.traverse((o) => { if (o.isMesh) o.castShadow = true; }); return new Agent(c, rooms[i], i); });
 const nova = new Agent(createNova(), lobby, 7);
+nova.c.root.traverse((o) => { if (o.isMesh) o.castShadow = true; });
 nova.wander = function () {
   const r = Math.random(); let target, troom = null, inter = [];
-  if (r < 0.5) { const def = ROOMS[(Math.random() * 7) | 0]; target = polar(R_SCULPT + 1.9, def.angle + rand(-0.06, 0.06)); }
-  else if (r < 0.8) target = polar(rand(14.8, 16.6), rand(0, 6.28));
-  else { troom = lobby; target = toW(lobby, new THREE.Vector3(rand(-1.5, 1.5), 0, 5.4)); inter = [target]; }
+  if (r < 0.5) { const def = ROOMS[(Math.random() * 7) | 0]; target = new THREE.Vector3(def.gx * 9.6, 0, def.gz * 9.6); }
+  else if (r < 0.8) target = ringPoint(rand(0, PER));
+  else { troom = lobby; target = toW(lobby, new THREE.Vector3(2.4, 0.2, 4.2)); inter = [target]; }
   this.go(this.plan(target, troom, inter), 1.25, () => { this.mode = 'pause'; this.pause = rand(2.5, 6); this.yawT = Math.atan2(-this.pos.x, -this.pos.z); });
 };
 
@@ -259,8 +278,8 @@ function refreshTags() {
 // ------------------------------------------------------------------ camera
 const home = () => {
   const asp = innerWidth / innerHeight;
-  const d = asp >= 1 ? 104 * Math.max(1, 1.5 / asp) : 104 * Math.min(2.3, 1.2 / asp);
-  const el = 0.76; // radians above horizon
+  const d = asp >= 1 ? 128 * Math.max(1, 1.5 / asp) : 128 * Math.min(2.3, 1.2 / asp);
+  const el = 0.84; // radians above horizon
   return { p: new THREE.Vector3(0, Math.sin(el) * d, Math.cos(el) * d), t: new THREE.Vector3(0, 0, -1.5) };
 };
 let fly = null, follow = null;
@@ -271,14 +290,13 @@ function flyTo(p, t, dur = 1.6, lift = 0.25) {
   controls.enabled = false;
 }
 function viewRoom(r) {
-  const inward = new THREE.Vector3(-Math.sin(r.angle), 0, -Math.cos(r.angle));
   const L = r === lobby;
-  const t = toW(r, new THREE.Vector3(0, L ? 2.2 : 1.2, L ? 3.2 : 3.8));
-  const p = t.clone().addScaledVector(inward, L ? 15 : 12.5).add(new THREE.Vector3(0, L ? 9 : 11, 0));
+  const t = toW(r, new THREE.Vector3(0, L ? 2.0 : 1.3, L ? 0.5 : 0.2));
+  const p = t.clone().addScaledVector(inward(r), L ? 15 : 13.5).add(new THREE.Vector3(0, L ? 10 : 12, 0));
   flyTo(p, t);
 }
 function viewAgent(a) {
-  const dir = new THREE.Vector3(-a.pos.x, 0, -a.pos.z); if (dir.length() < 1) dir.set(0, 0, 1); dir.normalize();
+  const dir = new THREE.Vector3(Math.sin(a.yaw), 0, Math.cos(a.yaw)).lerp(new THREE.Vector3(0, 0, 1), 0.35).normalize(); // in front of the creature
   const t = a.pos.clone().setY(1.1);
   flyTo(t.clone().addScaledVector(dir, 7.5).setY(6), t, 1.4);
   follow = { a, off: null };
@@ -353,38 +371,38 @@ $('#card-close').addEventListener('click', () => { closeCard(); goHome(); });
 function statusBadge(a) { return `<span class="badge s-${a.status}">${a.status === 'offline' ? '未連線' : STATUS_TEXT[a.status]}</span>`; }
 function showAgentCard(a) {
   const i = a.idx, def = a.room.def, s = a.session;
-  openCard(`<p class="eyebrow">${def.el}屬性 · ${esc(def.role)}</p>
+  openCard(`<div class="dex"><span class="no">No.${def.no}</span><span class="type">${def.type}</span></div>
     <h2>${esc(settings.names[i])}</h2>
-    <p class="lede">第 ${i + 1} 位主管 · 穿著${COLOR_N[i]}色${esc(def.outfit)}</p>
+    <p class="lede">${esc(def.flavor)}</p>
     <dl>
       <div><dt>狀態</dt><dd>${statusBadge(a)}</dd></div>
-      <div><dt>辦公室</dt><dd>${esc(settings.rooms[i])}</dd></div>
+      <div><dt>Lab</dt><dd>${esc(settings.rooms[i])}</dd></div>
+      <div><dt>專長</dt><dd>${esc(def.role)}</dd></div>
       <div><dt>專案</dt><dd>${s ? esc(s.project) : '—'}</dd></div>
       <div><dt>Session</dt><dd class="mono">${s ? esc(s.id.slice(0, 8)) : '—'}</dd></div>
       <div><dt>PID</dt><dd class="mono">${s && s.pid ? s.pid : '—'}</dd></div>
-      <div><dt>最後更新</dt><dd>${s ? relTime(s.updated) : '—'}</dd></div>
+      <div><dt>最後更新</dt><dd data-rel>${s ? relTime(s.updated) : '—'}</dd></div>
     </dl>
     <p class="hint">${s ? '' : `開第 ${i + 1} 個 Claude Code session，${esc(settings.names[i])}就會上班。`}</p>
-    <div class="actions"><button type="button" data-act="room:${i}">前往${esc(settings.rooms[i])}</button></div>`, def.color, a);
+    <div class="actions"><button type="button" data-act="room:${i}">Go to ${esc(settings.rooms[i])}</button></div>`, def.color, a);
 }
-const COLOR_N = ['紅', '橙', '黃', '綠', '藍', '靛', '紫'];
 function showRoomCard(r) {
   if (r === lobby) {
     const n = agents.filter((a) => a.session).length;
-    openCard(`<p class="eyebrow">Reception · 42F</p><h2>${esc(settings.rooms[7])}</h2><p class="lede">${esc(LOBBY.desc)}</p>
-      <dl><div><dt>公司</dt><dd>${esc(settings.company)}</dd></div><div><dt>在線主管</dt><dd>${n} / 7</dd></div>
-      <div><dt>等你回覆</dt><dd>${agents.filter((a) => a.status === 'waiting').length}</dd></div></dl>`, '#cfe0ff', r);
+    openCard(`<div class="dex"><span class="no">Main gate</span><span class="type">DESK</span></div><h2>${esc(settings.rooms[7])}</h2><p class="lede">${esc(LOBBY.desc)}</p>
+      <dl><div><dt>公司</dt><dd>${esc(settings.company)}</dd></div><div><dt>在線夥伴</dt><dd>${n} / 7</dd></div>
+      <div><dt>等你回覆</dt><dd>${agents.filter((a) => a.status === 'waiting').length}</dd></div></dl>`, '#9fb8ff', r);
     return;
   }
   const i = r.def.index, a = agents[i];
-  openCard(`<p class="eyebrow">${r.def.el}屬性辦公室 · ${COLOR_N[i]}</p><h2>${esc(settings.rooms[i])}</h2><p class="lede">${esc(r.def.desc)}</p>
-    <dl><div><dt>主管</dt><dd>${esc(settings.names[i])} ${statusBadge(a)}</dd></div>
+  openCard(`<div class="dex"><span class="no">Lab ${r.def.no}</span><span class="type">${r.def.type}</span></div><h2>${esc(settings.rooms[i])}</h2><p class="lede">${esc(r.def.role)} research. ${esc(r.def.flavor)}</p>
+    <dl><div><dt>夥伴</dt><dd>${esc(settings.names[i])} ${statusBadge(a)}</dd></div>
     <div><dt>專案</dt><dd>${a.session ? esc(a.session.project) : '—'}</dd></div>
-    <div><dt>門口雕塑</dt><dd>${r.def.phen}</dd></div></dl>
-    <div class="actions"><button type="button" data-act="agent:${i}">找${esc(settings.names[i])}</button></div>`, r.def.color, r);
+    <div><dt>街口雕塑</dt><dd>${r.def.phen}</dd></div></dl>
+    <div class="actions"><button type="button" data-act="agent:${i}">Find ${esc(settings.names[i])}</button></div>`, r.def.color, r);
 }
 function showNovaCard() {
-  openCard(`<p class="eyebrow">NPC · Guide bot</p><h2>NOVA</h2><p class="lede">全息導覽機器人。負責在大廳迎賓，沒事就去看每一座雕塑。點底部導覽列可以讓它帶你逛。</p>`, '#5ff3ff', nova);
+  openCard(`<p class="eyebrow">NPC · Guide bot</p><h2>NOVA</h2><p class="lede">The guide bot. Greets visitors at the Front Desk and patrols the plaza, checking every street sculpture.</p>`, '#5ff3ff', nova);
 }
 
 function refreshHUD() {
@@ -447,7 +465,7 @@ function poll() {
   document.head.appendChild(s);
 }
 poll(); setInterval(poll, 2000);
-setInterval(() => { if (cardFor && agents.includes(cardFor)) { const u = card.querySelectorAll('dd')[5]; if (u && cardFor.session) u.textContent = relTime(cardFor.session.updated); } }, 1000);
+setInterval(() => { if (cardFor && agents.includes(cardFor)) { const u = card.querySelector('dd[data-rel]'); if (u && cardFor.session) u.textContent = relTime(cardFor.session.updated); } }, 1000);
 
 // ------------------------------------------------------------------ settings dialog
 const dlg = $('#settings');
@@ -548,7 +566,8 @@ const center = new THREE.Vector3();
 function frame() {
   requestAnimationFrame(frame);
   const dt = Math.min(clk.getDelta(), 0.05); T += dt;
-  for (const u of world.updaters) u(T, dt);
+  for (const u of world.ups) u(T, dt);
+  twin.update(T, dt);
   for (const u of paths.ups) u(T, dt);
   for (const r of allRooms) for (const u of r.ups) u(T, dt);
   agents.forEach((a) => a.update(T, dt)); nova.update(T, dt);
@@ -567,7 +586,7 @@ function frame() {
   }
   sprites.forEach((s, i) => {
     const a = T * (reduced ? 0.15 : 0.6) + s.ph;
-    s.g.position.set(Math.cos(a) * 4.2, 8.4 + Math.sin(T * 1.6 + i) * 0.5, Math.sin(a) * 4.2);
+    s.g.position.set(Math.cos(a) * 3.4, 6.6 + Math.sin(T * 1.6 + i) * 0.4, Math.sin(a) * 3.4);
     s.g.rotation.y = -a + Math.PI;
     s.g.children.forEach((c) => { if (c.userData.s) c.rotation.z = c.userData.s * Math.sin(T * 14) * 0.5; });
   });
@@ -594,11 +613,11 @@ function frame() {
   applyViewOffset(dt);
   if (!fly) controls.update();
   // keep the camera over the floor
-  if (controls.target.length() > 32) controls.target.setLength(32);
+  if (controls.target.length() > 40) controls.target.setLength(40);
   // fade back walls that sit between the camera and their room
   for (const r of allRooms) {
     if (!r.fade.length) continue;
-    center.set(Math.sin(r.angle), 0, Math.cos(r.angle));
+    center.copy(inward(r)).negate();
     const cx = camera.position.x - r.group.position.x, cz = camera.position.z - r.group.position.z, l = Math.hypot(cx, cz) || 1;
     const dot = (cx * center.x + cz * center.z) / l;
     const want = dot > 0.12 ? 0.12 : 1;
@@ -606,12 +625,17 @@ function frame() {
   }
   { // bloom eases off as the camera moves in, so close-ups stay crisp
     const dd = camera.position.distanceTo(controls.target);
-    const k = Math.min(1, Math.max(0, (dd - 14) / 70));
-    bloom.strength = 0.32 + k * 0.42; bloom.radius = 0.18 + k * 0.2;
+    const k = Math.min(1, Math.max(0, (dd - 14) / 70)), n = world.state.night;
+    bloom.strength = (0.32 + k * 0.42) * (0.25 + 0.75 * n); bloom.radius = 0.18 + k * 0.2;
+    bloom.threshold = 0.9 + (1 - n) * 0.25;
+    allRooms.forEach((r) => (r.light.intensity = 2 + n * 9));
   }
   composer.render();
   updateTags();
 }
+// map legend: current digital-twin layer
+const legend = $('#legend-layer');
+twin.state.onLayer = (i) => { legend.style.setProperty('--c', COLORS[i]); legend.querySelector('b').textContent = LAYERS[i].name; legend.querySelector('small').textContent = LAYERS[i].zh; };
 refreshHUD();
 frame();
 
