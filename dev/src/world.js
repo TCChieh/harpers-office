@@ -126,9 +126,6 @@ export function buildWorld(scene, reduced, hourOverride) {
         for (let i = -8; i <= 8; i += 1.5) { ctx.beginPath(); ctx.moveTo(W(cx + i), W(cz - hb)); ctx.lineTo(W(cx + i), W(cz + hb)); ctx.stroke(); ctx.beginPath(); ctx.moveTo(W(cx - hb), W(cz + i)); ctx.lineTo(W(cx + hb), W(cz + i)); ctx.stroke(); }
       }
     }
-    // map-style contour lines on the lawns
-    ctx.strokeStyle = 'rgba(40,90,40,.18)'; ctx.lineWidth = 2;
-    for (let r = 4; r < 70; r += 3.2) { ctx.beginPath(); ctx.ellipse(W(-20), W(28), r * k, r * 0.7 * k, 0.4, 0, 7); ctx.stroke(); }
   });
   plan.tex.anisotropy = 8;
   const groundMat = new THREE.MeshToonMaterial({ map: plan.tex });

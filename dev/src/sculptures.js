@@ -47,10 +47,6 @@ export function buildPaths(scene, reduced) {
     strip.rotation.x = -Math.PI / 2; strip.position.set(0, 0.04, L / 2); holder.add(strip);
     // port at the lab door
     const port = new THREE.Group(); port.position.copy(B).setY(0.05); scene.add(port);
-    const portMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(def.color).multiplyScalar(1.6), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-    const pr = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.5, 40), portMat); pr.rotation.x = -Math.PI / 2; port.add(pr);
-    const pulseMat = portMat.clone();
-    const pulse = new THREE.Mesh(new THREE.RingGeometry(0.46, 0.52, 40), pulseMat); pulse.rotation.x = -Math.PI / 2; port.add(pulse);
     port.add(cyl(0.16, 0.2, 0.12, neon(def.color, 2.4), 16, 0, 0.06, 0));
     // data packets riding the conduit while the lab is busy
     const pk = particles(4, def.color, 0.5); scene.add(pk.pts);
@@ -64,9 +60,6 @@ export function buildPaths(scene, reduced) {
         pk.sz[k] = 0.9; pk.al[k] = hot * Math.sin(Math.PI * f);
       }
       pk.commit();
-      const pf = (tt * (0.5 + hot)) % 1;
-      pulse.scale.setScalar(1 + pf * (1.2 + hot * 1.5)); pulseMat.opacity = (1 - pf) * (0.25 + 0.75 * hot);
-      portMat.opacity = 0.45 + 0.55 * hot;
     });
 
   }

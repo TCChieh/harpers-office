@@ -568,11 +568,40 @@ function endIntro() {
 }
 
 // ------------------------------------------------------------------ loop
+// adaptive quality: if the page averages under 28 fps after the intro, first drop
+// shadows, then bloom and high-DPI rendering.
+let perfTime = 0, perfFrames = 0, perfStep = 0;
+function adaptQuality(raw) {
+  if (introActive || perfStep >= 2) return;
+  perfTime += raw; perfFrames++;
+  if (perfTime < 4) return;
+  const fps = perfFrames / perfTime; perfTime = 0; perfFrames = 0;
+  if (fps >= 28) return;
+  perfStep++;
+  if (perfStep === 1) {
+    renderer.shadowMap.enabled = false;
+    scene.traverse((o) => { if (o.material && !Array.isArray(o.material)) o.material.needsUpdate = true; });
+  } else {
+    bloom.enabled = false;
+    renderer.setPixelRatio(1); composer.setPixelRatio(1);
+    renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
+  }
+}
 const clk = new THREE.Clock(); let T = 0;
 const center = new THREE.Vector3();
 function frame() {
   requestAnimationFrame(frame);
-  const dt = Math.min(clk.getDelta(), 0.05); T += dt;
+  // A slow GPU can drop to a few fps; clamping each frame to 0.05s would then put
+  // the whole city in slow motion (agents never reach their lab). Catch up in
+  // 0.05s sub-steps instead, and step quality down if the frame rate stays low.
+  const raw = Math.min(clk.getDelta(), 0.5), dt = Math.min(raw, 0.05);
+  for (let left = raw - dt; left > 1e-4; left -= 0.05) {
+    const s = Math.min(0.05, left); T += s;
+    for (const u of world.ups) u(T, s);
+    agents.forEach((a) => a.update(T, s)); nova.update(T, s);
+  }
+  T += dt;
+  adaptQuality(raw);
   for (const u of world.ups) u(T, dt);
   twin.update(T, dt);
   for (const u of paths.ups) u(T, dt);
